@@ -58,15 +58,40 @@ Two fixes went in here that also improve the AGP app, since the backend is share
 |---|---|
 | Frontend (this folder) | GitHub Pages → `github.com/amycothrangray/cu-blog-builder` |
 | Backend routes | `agp-wallart-backend/server.js` (DigitalOcean "dolphin-app") — same server as the AGP builder |
-| WP plugin | `wp-plugin/cu-blog-meta.php` — lets the app write Yoast meta desc / focus keyword |
+| WP plugin | `wp-plugin/cu-blog-bridge.php` — **required.** How the app authenticates and publishes |
+
+## How it authenticates (and why it differs from the AGP app)
+
+The AGP builder logs into WordPress with an **application password**. That route
+is closed on christianunified.org: **Wordfence disables application passwords**
+site-wide (Wordfence → Firewall → Firewall Options → *Disable WordPress
+application passwords*), and its options screen is itself locked behind an
+incomplete Wordfence license install.
+
+Rather than weaken the school's firewall, this app ships its own door. The
+`cu-blog-bridge` plugin adds two routes — `POST /wp-json/cu-blog/v1/media` and
+`POST /wp-json/cu-blog/v1/publish` — guarded by a shared secret the plugin
+generates for you. Nothing about Wordfence changes.
+
+- The secret is compared with `hash_equals()` (constant time) and the routes
+  refuse to answer over plain HTTP.
+- Uploads are checked with `getimagesizefromstring()` — the bytes must really be
+  a JPEG, PNG or WebP, whatever the filename claims.
+- Posts are written as a WordPress user you pick, and the plugin switches to that
+  user before inserting. That matters: without it WordPress strips the
+  BlogPosting JSON-LD `<script>`, which is the whole point of the app.
+- Reads (categories, pages, posts for the link picker) need no login at all —
+  that data is already public.
+- Regenerating the secret from the settings screen instantly revokes the old one.
 
 ## One-time setup
 
-**1 — WordPress Application Password** (on christianunified.org)
+**1 — Install the bridge plugin** (on christianunified.org)
 
-Log in at christianunified.org/wp-admin as an account that can publish posts →
-**Users → Profile → Application Passwords** → new password named
-`CU Blog Builder` → copy the generated password (you only see it once).
+Zip `wp-plugin/cu-blog-bridge.php` (or use the `cu-blog-bridge.zip` in this
+folder) → wp-admin → **Plugins → Add New → Upload Plugin** → Activate.
+Then go to **Settings → CU Blog Bridge** and copy the shared secret it generated.
+Check the "Posts are written by" dropdown while you're there.
 
 **2 — Backend**
 
@@ -76,14 +101,16 @@ unchanged — same paths, same env vars, same behaviour.
 
 **3 — DigitalOcean env vars** (dolphin-app → Settings → App-Level Environment Variables)
 
-Add four new ones. Nothing existing changes.
+Add these. Nothing existing changes — the AGP variables and routes are untouched.
 
 | Variable | Value |
 |---|---|
 | `CU_BLOG_APP_KEY` | a passphrase you make up — give it to whoever writes the blog (encrypt) |
-| `CU_WP_USER` | the christianunified.org username from step 1 |
-| `CU_WP_APP_PASSWORD` | the Application Password from step 1 (encrypt) |
+| `CU_BRIDGE_SECRET` | the secret from Settings → CU Blog Bridge in step 1 (encrypt) |
 | `CU_WP_URL` | *optional* — defaults to `https://christianunified.org` |
+
+There is deliberately no WordPress username or password here. The bridge is the
+only credential, it only does two things, and you can revoke it in one click.
 
 `ANTHROPIC_API_KEY` is already set and is shared by both apps.
 
@@ -94,13 +121,6 @@ Create a public repo `cu-blog-builder`, upload `index.html`, `style.css`,
 branch, `main` / root.
 
 App URL: `https://amycothrangray.github.io/cu-blog-builder/`
-
-**5 — WordPress plugin** (recommended)
-
-Zip `wp-plugin/cu-blog-meta.php` → christianunified.org/wp-admin → Plugins → Add
-New → Upload Plugin → Activate. Without it the post excerpt still carries the
-description, but with it Yoast's meta description and focus keyword are set
-automatically. (Yoast is already installed on the site.)
 
 ## Publishing app updates
 
@@ -119,4 +139,8 @@ Same drill as the other apps: edit locally, bump `?v=N` on the css/js links in
 - Publishing is resumable: if it fails mid-way, press Publish again and photos
   already uploaded are skipped.
 - The backend endpoints require the `X-CU-Key` header; without `CU_BLOG_APP_KEY`
-  set they return 503.
+  set they return 503. (DigitalOcean's edge rewrites that 503 into its own
+  branded error page reporting 504 — that is what "not configured yet" looks
+  like from outside.)
+- Yoast meta description and focus keyword are set by the bridge directly; Yoast
+  is already installed on the site.
