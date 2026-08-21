@@ -2,7 +2,7 @@
 /**
  * Plugin Name: CU Blog Bridge
  * Description: Lets the Christian Unified Blog Builder upload photos and publish posts without WordPress application passwords, which Wordfence disables on this site. Adds two REST routes under cu-blog/v1, guarded by a shared secret this plugin generates for you. See Settings → CU Blog Bridge for the secret to paste into the app's backend.
- * Version: 1.0
+ * Version: 1.1
  * Author: Christian Unified Schools of San Diego
  */
 
@@ -76,6 +76,8 @@ add_action('rest_api_init', function () {
                 'ok'     => true,
                 'author' => cu_blog_bridge_author_id(),
                 'yoast'  => defined('WPSEO_VERSION'),
+                'tz'     => wp_timezone_string(),
+                'now'    => current_time('mysql'),
             ];
         },
     ]));
@@ -157,6 +159,23 @@ function cu_blog_bridge_publish(WP_REST_Request $req) {
         'post_status'  => (($p['status'] ?? 'publish') === 'draft') ? 'draft' : 'publish',
         'post_author'  => $author,
     ];
+
+    /* Scheduling and back-dating. The app sends a plain local time
+       ("2026-09-04T18:30:00") meant in the site's own timezone, so set
+       post_date and let WordPress derive the GMT value. A future date must
+       also flip the status to 'future', otherwise WordPress publishes it
+       straight away with tomorrow's date printed on it. */
+    $date = (string) ($p['date'] ?? '');
+    if ($date !== '' && preg_match('/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?$/', $date)) {
+        $local = str_replace('T', ' ', $date);
+        if (strlen($local) === 16) $local .= ':00';
+        $post['post_date']     = $local;
+        $post['post_date_gmt'] = get_gmt_from_date($local);
+        if ($post['post_status'] === 'publish'
+            && strtotime($local) > strtotime(current_time('mysql'))) {
+            $post['post_status'] = 'future';
+        }
+    }
     $slug = sanitize_title((string) ($p['slug'] ?? ''));
     if ($slug !== '') $post['post_name'] = $slug;
     if (!empty($p['categories']) && is_array($p['categories'])) {
@@ -179,6 +198,8 @@ function cu_blog_bridge_publish(WP_REST_Request $req) {
         'id'               => (int) $id,
         'link'             => get_permalink($id),
         'yoastMetaApplied' => $yoast,
+        'status'           => get_post_status($id),
+        'date'             => get_post_field('post_date', $id),
     ];
 }
 
