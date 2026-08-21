@@ -247,3 +247,19 @@ h3.sub { margin: 26px 0 4px; font-size: 1.15rem; }
 
 /* Step 1 has three fields in a two-column grid; keep the rows even. */
 .grid2 > label { min-width: 0; }
+
+/* ---- Source material (flyer / program) -> drafted opening paragraph ---- */
+.srcbox { border: 1px solid #dfe7f1; border-radius: 12px; padding: 14px 16px 10px; margin-bottom: 18px; background: #fbfcfe; }
+.srchead { display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 10px; }
+.srchead .hint { display: block; margin-top: 2px; }
+.srcdrop { border: 2px dashed #ccd6e2; border-radius: 10px; padding: 14px; text-align: center; background: var(--white); }
+.srcdrop.drag { border-color: var(--blue); background: var(--sky); }
+.srcdrop p { margin: 0; }
+.srclist { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.srcitem { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 999px; border: 1px solid #dfe7f1; background: var(--white); font-size: .88rem; }
+.srcitem img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
+.srcitem .pdf { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 4px; background: var(--navy); color: var(--white); font-size: .6rem; font-weight: 700; letter-spacing: .04em; }
+.srcitem button { border: none; background: none; cursor: pointer; color: var(--gray); font-size: 1rem; padding: 0; }
+.facts { margin: 12px 0 4px; display: grid; grid-template-columns: 70px 1fr; gap: 4px 12px; font-size: .9rem; }
+.facts .k { color: var(--gray); text-transform: uppercase; letter-spacing: .06em; font-size: .72rem; padding-top: 3px; }
+#introText { width: 100%; font: inherit; font-size: 1rem; line-height: 1.6; padding: 10px 12px; border: 1px solid #ccd6e2; border-radius: 8px; }

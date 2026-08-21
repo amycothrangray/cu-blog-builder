@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Mulish:ital,wght@0,300..700;1,300..600&family=Raleway:wght@500..700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 
@@ -73,6 +73,24 @@
 <!-- 3 · Layout -->
 <section class="step" id="stepLayout">
   <h2><span class="stepnum">3</span> Build the post</h2>
+  <!-- Source material: a flyer / program / press release the AI reads to draft the opening -->
+  <div class="srcbox">
+    <div class="srchead">
+      <div>
+        <strong>Got a flyer, program or press release?</strong>
+        <span class="hint">Drop it here (PDF or photos of it) and Claude drafts the opening paragraph — the what, when, where, who and why — from what's actually on it.</span>
+      </div>
+      <button class="btn primary" id="introBtn" disabled>✍️ Draft the opening from it</button>
+    </div>
+    <div id="srcDrop" class="srcdrop">
+      <p>Drag the PDF or JPGs here, or <button class="btn linklike" id="srcBrowseBtn">choose files</button>
+        <span class="hint">— these are source material only; they're never published.</span></p>
+      <input type="file" id="srcInput" accept="application/pdf,image/jpeg,image/png,image/webp" multiple hidden>
+    </div>
+    <div id="srcList" class="srclist"></div>
+    <p class="hint" id="srcState"></p>
+  </div>
+
   <p class="hint">Hover any photo for <strong>Crop</strong>, Swap or Remove. Each row also has its own buttons: ⇄ mixes the order, ▣ squares the whole row.</p>
   <div class="addbar">
     <button class="btn" data-add="text">+ Words</button>
@@ -252,6 +270,21 @@
 </div>
 
 
+<!-- Draft-intro modal -->
+<div id="introModal" class="overlay hidden">
+  <div class="card modal">
+    <h3>Here's an opening paragraph</h3>
+    <p class="hint">Written only from what's on the documents you dropped in. Edit it here, then add it — it goes in as the first block of the post.</p>
+    <textarea id="introText" rows="7"></textarea>
+    <div id="introFacts" class="facts"></div>
+    <p class="hint" id="introUnsure"></p>
+    <div class="modal-actions">
+      <button class="btn primary" id="introUseBtn">Use as the opening paragraph</button>
+      <button class="btn ghost" data-close="introModal">Not now</button>
+    </div>
+  </div>
+</div>
+
 <!-- Paste words modal -->
 <div id="wordsModal" class="overlay hidden">
   <div class="card modal">
@@ -311,6 +344,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

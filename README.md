@@ -30,6 +30,20 @@ publishing is resumable, photos are resized to 1800px in the browser, credit and
 copyright are stamped into each JPEG's XMP, and there's a live 8-point SEO
 scorecard against the focus keyword.
 
+## Draft the opening from a flyer
+
+Step 3 has a **source material** box. Drop in the event's flyer, program, press
+release or email — a PDF, or photos of it — and press **✍️ Draft the opening from
+it**. Claude reads the documents and drafts the opening paragraph (what, when,
+where, who, why), shows the facts it pulled out, and adds the paragraph as the first
+block of the post with one click. If the title or campus field is still empty it
+fills those in too, and the facts ride along to the ✨ button so titles and meta
+descriptions agree with the flyer.
+
+The documents are source material only: they live in memory, are never saved with
+the draft, and are never published. Photos of a flyer are shrunk to 1600px before
+upload; PDFs go as-is (keep them under 15 MB, ~20 MB total).
+
 ## What's different
 
 | | AGP builder | This one |

@@ -82,6 +82,7 @@ function freshState() {
     id: crypto.randomUUID(),
     createdAt: Date.now(), updatedAt: Date.now(),
     title: '', slug: '', location: '', credit: '', categories: [],
+    sourceFacts: null,
     metaDesc: '', focusKeyword: '', excerpt: '', secondaryKeywords: [],
     photos: {}, photoOrder: [],
     blocks: [],
@@ -1072,6 +1073,128 @@ function magicLayout() {
   renderBlocks(); renderTray(); touch();
 }
 
+/* -------------------------------------------------- source material → intro
+   A flyer, program, press release or email — PDF or photos of it — that the AI
+   reads to draft the opening paragraph (what / when / where / who / why). The
+   documents are source material only: kept in memory, never saved with the
+   draft, never published. Only the extracted facts are kept (state.sourceFacts)
+   so the ✨ suggestions agree with the flyer. */
+let sourceDocs = [];   // [{ id, name, mediaType, dataBase64, thumb }]
+const SRC_MAX_PDF = 15 * 1024 * 1024;   // per file
+const SRC_MAX_TOTAL = 20 * 1024 * 1024; // what the backend will accept
+
+function srcTotalBytes() {
+  return sourceDocs.reduce((n, d) => n + d.dataBase64.length * 0.75, 0);
+}
+function renderSourceDocs() {
+  const box = $('srcList');
+  if (!box) return;
+  box.innerHTML = '';
+  sourceDocs.forEach((d, i) => {
+    const el = document.createElement('span');
+    el.className = 'srcitem';
+    el.innerHTML = (d.mediaType === 'application/pdf'
+      ? '<span class="pdf">PDF</span>'
+      : `<img src="${d.thumb}" alt="">`) +
+      `<span>${esc(d.name)}</span><button title="Remove">✕</button>`;
+    el.querySelector('button').onclick = () => { sourceDocs.splice(i, 1); renderSourceDocs(); };
+    box.appendChild(el);
+  });
+  $('introBtn').disabled = !sourceDocs.length;
+  const mb = (srcTotalBytes() / 1048576).toFixed(1);
+  $('srcState').textContent = sourceDocs.length
+    ? `${sourceDocs.length} document${sourceDocs.length === 1 ? '' : 's'} ready (${mb} MB).`
+    : '';
+}
+function addSourceFiles(files) {
+  [...files].forEach((f) => {
+    const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+    const isImg = /^image\/(jpeg|png|webp)$/.test(f.type);
+    if (!isPdf && !isImg) { $('srcState').textContent = `Skipped ${f.name} — only PDF, JPG, PNG or WebP.`; return; }
+    if (isPdf) {
+      if (f.size > SRC_MAX_PDF) { $('srcState').textContent = `${f.name} is ${(f.size / 1048576).toFixed(0)} MB — keep PDFs under 15 MB.`; return; }
+      const rd = new FileReader();
+      rd.onload = () => {
+        sourceDocs.push({ id: crypto.randomUUID(), name: f.name, mediaType: 'application/pdf',
+          dataBase64: String(rd.result).split(',')[1], thumb: '' });
+        renderSourceDocs();
+      };
+      rd.readAsDataURL(f);
+      return;
+    }
+    // Images: shrink like the post photos so a phone snap of a flyer doesn't
+    // weigh 8 MB — 1600px is plenty for the model to read the text.
+    const img = new Image();
+    img.onload = () => {
+      const make = (edge, q) => {
+        const sc = Math.min(1, edge / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.width * sc));
+        c.height = Math.max(1, Math.round(img.height * sc));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        return c.toDataURL('image/jpeg', q);
+      };
+      sourceDocs.push({ id: crypto.randomUUID(), name: f.name, mediaType: 'image/jpeg',
+        dataBase64: make(1600, 0.85).split(',')[1], thumb: make(120, 0.7) });
+      URL.revokeObjectURL(img.src);
+      renderSourceDocs();
+    };
+    img.src = URL.createObjectURL(f);
+  });
+}
+let lastIntro = null;
+async function draftIntro() {
+  if (!sourceDocs.length) return;
+  if (srcTotalBytes() > SRC_MAX_TOTAL) { alert('Those documents add up to more than 20 MB — remove one or two and try again.'); return; }
+  const btn = $('introBtn');
+  btn.disabled = true;
+  $('srcState').textContent = 'Reading the documents… (about 20–40 seconds)';
+  try {
+    const r = await api(API + '/intro', {
+      method: 'POST',
+      body: JSON.stringify({
+        docs: sourceDocs.map((d) => ({ name: d.name, mediaType: d.mediaType, dataBase64: d.dataBase64 })),
+        title: state.title, location: state.location, text: postText(),
+        keywords: getKeywords(),
+      }),
+    });
+    lastIntro = r;
+    state.sourceFacts = r.facts && Object.keys(r.facts).length ? r.facts : null;
+    $('introText').value = r.intro || '';
+    const f = r.facts || {};
+    const order = ['what', 'when', 'where', 'who', 'why', 'how'];
+    $('introFacts').innerHTML = order.filter((k) => f[k]).map((k) =>
+      `<span class="k">${k}</span><span>${esc(f[k])}</span>`).join('');
+    $('introUnsure').textContent = (r.unsure && r.unsure.length)
+      ? 'Couldn\'t read or wasn\'t sure about: ' + r.unsure.join('; ') : '';
+    $('introModal').classList.remove('hidden');
+    $('srcState').textContent = 'Drafted. Add it from the window, or close and try again with better photos of the flyer.';
+    touch();
+  } catch (e) {
+    $('srcState').textContent = 'Couldn\'t draft it (' + e.message + '). Try a clearer photo or a PDF.';
+  }
+  btn.disabled = false;
+}
+function useIntro() {
+  const textIn = $('introText').value.trim();
+  if (!textIn) return;
+  // The opening goes first. If the post already opens with words, the new
+  // paragraph sits above them rather than overwriting anything.
+  state.blocks.unshift({ type: 'text', text: textIn });
+  // Fill in blanks the flyer answered, without overwriting anything typed.
+  if (lastIntro) {
+    if (!state.title.trim() && lastIntro.suggestedTitle) {
+      state.title = lastIntro.suggestedTitle; $('fTitle').value = state.title; slugTouched = false; syncSlug();
+    }
+    if (!state.location.trim() && lastIntro.suggestedLocation) {
+      state.location = lastIntro.suggestedLocation; $('fLocation').value = state.location;
+    }
+  }
+  $('introModal').classList.add('hidden');
+  renderBlocks(); renderSeoCheck(); touch();
+  $('stepLayout').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 /* ------------------------------------------------------------------- SEO */
 function syncSlug() {
   if (!slugTouched || !state.slug) {
@@ -1219,6 +1342,7 @@ async function aiSuggest() {
       body: JSON.stringify({
         title: state.title, location: state.location, text, thumbs,
         keywords: getKeywords(),
+        facts: state.sourceFacts || undefined,
       }),
     });
     // titles
@@ -1667,6 +1791,7 @@ function loadState(s) {
   // Older saved drafts predate these fields.
   s.inlineLinks = s.inlineLinks || [];
   s.credit = s.credit || '';
+  s.sourceFacts = s.sourceFacts || null;
   s.when = s.when || 'now';
   s.whenAt = s.whenAt || '';
   s.secondaryKeywords = s.secondaryKeywords || [];
@@ -1742,6 +1867,16 @@ async function init() {
   $('magicLayoutBtn').onclick = magicLayout;
 
   $('aiBtn').onclick = aiSuggest;
+
+  // source material → opening paragraph
+  const sd = $('srcDrop');
+  $('srcBrowseBtn').onclick = () => $('srcInput').click();
+  $('srcInput').onchange = (e) => { addSourceFiles(e.target.files); e.target.value = ''; };
+  ['dragover', 'dragenter'].forEach((ev) => sd.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); sd.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach((ev) => sd.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); sd.classList.remove('drag'); }));
+  sd.addEventListener('drop', (e) => addSourceFiles(e.dataTransfer.files));
+  $('introBtn').onclick = draftIntro;
+  $('introUseBtn').onclick = useIntro;
   $('altBtn').onclick = async () => {
     $('altBtn').disabled = true;
     const n = await writeAllAlts(true);
