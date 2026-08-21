@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Christian Unified Blog Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Mulish:ital,wght@0,300..700;1,300..600&family=Raleway:wght@500..700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+
+<!-- Passphrase gate -->
+<div id="gate" class="overlay hidden">
+  <div class="card gate-card">
+    <h1 class="brand">Christian <span>Unified</span></h1>
+    <h2>Blog Builder</h2>
+    <p>Enter the passphrase Amy gave you. You only have to do this once on this computer.</p>
+    <!-- Deliberately a visible text field, not type=password: it's a shared team
+         passphrase, and password managers hijack real password inputs. -->
+    <input type="text" id="gateInput" placeholder="Passphrase" autocomplete="off"
+           autocapitalize="off" autocorrect="off" spellcheck="false" name="cu-passphrase">
+    <button class="btn primary" id="gateBtn">Let's blog</button>
+    <p class="gate-error hidden" id="gateError">That passphrase didn't work — double-check with Amy.</p>
+  </div>
+</div>
+
+<header>
+  <div class="brand">Christian <span>Unified</span> · Blog Builder</div>
+  <div class="header-actions">
+    <span id="saveState" class="save-state">saved</span>
+    <button class="btn ghost" id="newPostBtn">+ New post</button>
+    <button class="btn ghost" id="draftsBtn">My drafts</button>
+  </div>
+</header>
+
+<main>
+
+<!-- 1 · Details -->
+<section class="step" id="stepDetails">
+  <h2><span class="stepnum">1</span> Post details</h2>
+  <div class="grid2">
+    <label>Post title
+      <input type="text" id="fTitle" placeholder="Celebrating 60 Years: Homecoming 2025">
+    </label>
+    <label>Campus or place <span class="hint">(where it happened)</span>
+      <input type="text" id="fLocation" placeholder="Christian High School, El Cajon">
+    </label>
+    <label>Photo credit <span class="hint">(stamped inside every photo file)</span>
+      <input type="text" id="fCredit" placeholder="Christian Unified Schools of San Diego">
+    </label>
+  </div>
+  <label>Categories <span class="hint">(pick everything that fits)</span></label>
+  <div id="catChips" class="chips"><span class="hint">Loading categories from the website…</span></div>
+</section>
+
+<!-- 2 · Photos -->
+<section class="step" id="stepPhotos">
+  <h2><span class="stepnum">2</span> Photos</h2>
+  <div id="dropzone">
+    <p><strong>Drag the photos here</strong> or <button class="btn linklike" id="browseBtn">browse your computer</button></p>
+    <p class="hint">Any size is fine — they're automatically resized and optimized for the blog right here in your browser.</p>
+    <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp" multiple hidden>
+  </div>
+  <div id="tray" class="tray"></div>
+</section>
+
+<!-- 3 · Layout -->
+<section class="step" id="stepLayout">
+  <h2><span class="stepnum">3</span> Build the post</h2>
+  <p class="hint">Add rows and drop photos in. Click any photo in a row to swap or remove it — nothing ever starts over.</p>
+  <div class="addbar">
+    <button class="btn" data-add="text">+ Words</button>
+    <button class="btn" data-add="heading">+ Heading</button>
+    <button class="btn" data-add="row1">+ Single photo</button>
+    <button class="btn" data-add="row2">+ Diptych</button>
+    <button class="btn" data-add="row3">+ Triptych</button>
+    <span class="addbar-spacer"></span>
+    <button class="btn" id="pasteWordsBtn">Paste the write-up</button>
+    <button class="btn" id="magicLayoutBtn">✨ Auto-layout the rest</button>
+  </div>
+  <div id="blocks" class="blocks"></div>
+</section>
+
+<!-- 4 · SEO & links -->
+<section class="step" id="stepSeo">
+  <h2><span class="stepnum">4</span> SEO &amp; links</h2>
+  <button class="btn primary" id="aiBtn">✨ Suggest everything with AI</button>
+  <button class="btn" id="altBtn">Write alt text for any photo missing it</button>
+  <span class="hint" id="aiState"></span>
+  <div id="titleOptions" class="chips hidden"></div>
+  <div class="grid2">
+    <label>Web address (slug) <span class="hint">auto-filled from the title</span>
+      <input type="text" id="fSlug" placeholder="celebrating-60-years-homecoming-2025">
+    </label>
+    <label>Focus keyword
+      <input type="text" id="fKeyword" placeholder="Christian high school El Cajon">
+    </label>
+  </div>
+  <label>Meta description <span class="hint">what Google shows under the title — <span id="metaCount">0</span>/155</span>
+    <textarea id="fMetaDesc" rows="2" maxlength="170"></textarea>
+  </label>
+
+  <details class="kwbox">
+    <summary>Keywords I want to rank for <span class="hint">(shared across every post)</span></summary>
+    <p class="hint">The AI uses these when it writes titles, descriptions and alt text — and only where they honestly fit the story.</p>
+    <div id="kwChips" class="chips"></div>
+    <div class="kw-add">
+      <input type="text" id="kwInput" placeholder="e.g. private Christian school San Diego">
+      <button class="btn" id="kwAddBtn">Add keyword</button>
+    </div>
+  </details>
+
+  <div id="seoCheck" class="seocheck"></div>
+
+  <h3 class="sub">Links inside the text <span class="hint">— stronger for SEO than a list at the end</span></h3>
+  <div class="grid2">
+    <div>
+      <label>Suggested <span class="hint">(from the ✨ button)</span></label>
+      <div id="inlineSuggestions" class="linklist"></div>
+    </div>
+    <div>
+      <label>In use</label>
+      <div id="inlineChosen" class="linklist chosen"></div>
+      <div class="inline-add">
+        <input type="text" id="ilPhrase" placeholder="Words in the post, e.g. the Touchdown Club">
+        <input type="text" id="ilUrl" placeholder="Link to… (https://… or pick below)">
+        <button class="btn" id="ilAddBtn">Link it</button>
+      </div>
+      <select id="ilPagePick"><option value="">— or link to a page on the school site —</option></select>
+    </div>
+  </div>
+
+  <h3 class="sub">Links at the end of the post</h3>
+  <div class="grid2">
+    <div>
+      <label>Links to other pages on the school site</label>
+      <input type="text" id="linkSearch" placeholder="Search pages & posts…">
+      <div id="linkResults" class="linklist"></div>
+    </div>
+    <div>
+      <label>Chosen links <span class="hint">(shown at the end of the post)</span></label>
+      <div id="chosenLinks" class="linklist chosen"></div>
+      <div class="ext-add">
+        <input type="text" id="extTitle" placeholder="Outside link — name">
+        <input type="text" id="extUrl" placeholder="https://…">
+        <button class="btn" id="extAddBtn">Add</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5 · Preview & publish -->
+<section class="step" id="stepPublish">
+  <h2><span class="stepnum">5</span> Preview &amp; publish</h2>
+  <div class="pubbar">
+    <button class="btn" id="previewBtn">Preview the post</button>
+    <button class="btn primary big" id="publishBtn">Publish to christianunified.org</button>
+    <button class="btn ghost" id="exportBtn">Save design file</button>
+    <button class="btn ghost" id="importBtn">Open design file</button>
+    <input type="file" id="importInput" accept=".cublog.json,application/json" hidden>
+  </div>
+  <div id="pubProgress" class="hidden">
+    <div class="bar"><div id="pubBarFill"></div></div>
+    <p id="pubStatus"></p>
+  </div>
+  <div id="pubDone" class="hidden card">
+    <h3>It's live! 🎉</h3>
+    <p><a id="pubLink" href="#" target="_blank" rel="noopener"></a></p>
+  </div>
+</section>
+
+</main>
+
+<!-- Photo picker modal -->
+<div id="picker" class="overlay hidden">
+  <div class="card modal">
+    <h3>Choose a photo</h3>
+    <div id="pickerGrid" class="tray"></div>
+    <button class="btn ghost close" data-close="picker">Cancel</button>
+  </div>
+</div>
+
+<!-- Paste words modal -->
+<div id="wordsModal" class="overlay hidden">
+  <div class="card modal">
+    <h3>Paste the blog write-up</h3>
+    <p class="hint">Each blank line becomes its own paragraph, spread between the photo rows.</p>
+    <textarea id="wordsInput" rows="12"></textarea>
+    <div class="modal-actions">
+      <button class="btn primary" id="wordsGoBtn">Add the words</button>
+      <button class="btn ghost" data-close="wordsModal">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Photo details modal -->
+<div id="photoModal" class="overlay hidden">
+  <div class="card modal">
+    <h3>Photo details</h3>
+    <img id="pmImg" alt="">
+    <label>Alt text <span class="hint">(describe the photo for Google &amp; screen readers)</span>
+      <input type="text" id="pmAlt">
+    </label>
+    <label>File name <span class="hint">(keywords help SEO)</span>
+      <input type="text" id="pmFilename">
+    </label>
+    <label>Caption <span class="hint">(optional — stored in WordPress with the photo)</span>
+      <input type="text" id="pmCaption">
+    </label>
+    <p class="hint">Every published photo is automatically stamped with the photo credit,
+      copyright and keywords inside the file itself.</p>
+    <div class="modal-actions">
+      <button class="btn" id="pmFeatureBtn">Use as featured image</button>
+      <button class="btn danger" id="pmRemoveBtn">Remove photo</button>
+      <button class="btn primary" data-close="photoModal">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Drafts modal -->
+<div id="draftsModal" class="overlay hidden">
+  <div class="card modal">
+    <h3>My drafts</h3>
+    <p class="hint">Every post saves itself automatically as you work.</p>
+    <div id="draftsList"></div>
+    <button class="btn ghost close" data-close="draftsModal">Close</button>
+  </div>
+</div>
+
+<!-- Preview modal -->
+<div id="previewModal" class="overlay hidden">
+  <div class="card modal wide">
+    <h3>Preview</h3>
+    <iframe id="previewFrame" title="Post preview"></iframe>
+    <button class="btn ghost close" data-close="previewModal">Close</button>
+  </div>
+</div>
+
+<script src="app.js?v=1"></script>
+</body>
+</html>
