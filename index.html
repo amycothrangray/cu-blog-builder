@@ -5,10 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex">
 <title>Christian Unified Blog Builder</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%234a4844%22%2F%3E%3Crect%20x%3D%228%22%20y%3D%2218%22%20width%3D%2248%22%20height%3D%2232%22%20rx%3D%226%22%20fill%3D%22%23f0e1db%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2212%22%20width%3D%2216%22%20height%3D%228%22%20rx%3D%223%22%20fill%3D%22%23f0e1db%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2234%22%20r%3D%2211%22%20fill%3D%22%234a4844%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2234%22%20r%3D%227%22%20fill%3D%22%23c67a85%22%2F%3E%3Ccircle%20cx%3D%2247%22%20cy%3D%2225%22%20r%3D%222.5%22%20fill%3D%22%23c67a85%22%2F%3E%3C%2Fsvg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2214%22%20fill%3D%22%234a4844%22%2F%3E%3Crect%20x%3D%228%22%20y%3D%2218%22%20width%3D%2248%22%20height%3D%2232%22%20rx%3D%226%22%20fill%3D%22%23f0e1db%22%2F%3E%3Crect%20x%3D%2224%22%20y%3D%2212%22%20width%3D%2216%22%20height%3D%228%22%20rx%3D%223%22%20fill%3D%22%23f0e1db%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2234%22%20r%3D%2211%22%20fill%3D%22%234a4844%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2234%22%20r%3D%227%22%20fill%3D%22%23c67a85%22%2F%3E%3Ccircle%20cx%3D%2247%22%20cy%3D%2225%22%20r%3D%222.5%22%20fill%3D%22%23c67a85%22%2F%3E%3C%2Fsvg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Mulish:ital,wght@0,300..700;1,300..600&family=Raleway:wght@500..700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=1">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 
@@ -43,7 +45,7 @@
   <h2><span class="stepnum">1</span> Post details</h2>
   <div class="grid2">
     <label>Post title
-      <input type="text" id="fTitle" placeholder="Celebrating 60 Years: Homecoming 2025">
+      <input type="text" id="fTitle" placeholder="Six Decades of Patriots: Homecoming 2025">
     </label>
     <label>Campus or place <span class="hint">(where it happened)</span>
       <input type="text" id="fLocation" placeholder="Christian High School, El Cajon">
@@ -64,24 +66,38 @@
     <p class="hint">Any size is fine — they're automatically resized and optimized for the blog right here in your browser.</p>
     <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp" multiple hidden>
   </div>
+  <p class="hint">Click any photo to edit its details or crop it. <span id="photoState"></span></p>
   <div id="tray" class="tray"></div>
 </section>
 
 <!-- 3 · Layout -->
 <section class="step" id="stepLayout">
   <h2><span class="stepnum">3</span> Build the post</h2>
-  <p class="hint">Add rows and drop photos in. Click any photo in a row to swap or remove it — nothing ever starts over.</p>
+  <p class="hint">Hover any photo for <strong>Crop</strong>, Swap or Remove. Each row also has its own buttons: ⇄ mixes the order, ▣ squares the whole row.</p>
   <div class="addbar">
     <button class="btn" data-add="text">+ Words</button>
     <button class="btn" data-add="heading">+ Heading</button>
     <button class="btn" data-add="row1">+ Single photo</button>
     <button class="btn" data-add="row2">+ Diptych</button>
     <button class="btn" data-add="row3">+ Triptych</button>
+    <button class="btn" data-add="row4">+ Four across</button>
     <span class="addbar-spacer"></span>
     <button class="btn" id="pasteWordsBtn">Paste the write-up</button>
-    <button class="btn" id="magicLayoutBtn">✨ Auto-layout the rest</button>
+    <button class="btn primary" id="magicLayoutBtn">✨ Lay the photos out for me</button>
   </div>
-  <div id="blocks" class="blocks"></div>
+  <p class="hint" id="layoutState"></p>
+  <p class="hint layout-note hidden" id="layoutNote"></p>
+  <div class="layout-wrap">
+    <div id="blocks" class="blocks"></div>
+    <aside class="outline">
+      <div class="outline-head">
+        <strong>The post so far</strong>
+        <span class="hint" id="outlineCount"></span>
+      </div>
+      <p class="hint">Click to jump, or drag these to reorder — works here and on the left.</p>
+      <div id="outlineList"></div>
+    </aside>
+  </div>
 </section>
 
 <!-- 4 · SEO & links -->
@@ -93,7 +109,7 @@
   <div id="titleOptions" class="chips hidden"></div>
   <div class="grid2">
     <label>Web address (slug) <span class="hint">auto-filled from the title</span>
-      <input type="text" id="fSlug" placeholder="celebrating-60-years-homecoming-2025">
+      <input type="text" id="fSlug" placeholder="six-decades-of-patriots-homecoming-2025">
     </label>
     <label>Focus keyword
       <input type="text" id="fKeyword" placeholder="Christian high school El Cajon">
@@ -108,7 +124,7 @@
     <p class="hint">The AI uses these when it writes titles, descriptions and alt text — and only where they honestly fit the story.</p>
     <div id="kwChips" class="chips"></div>
     <div class="kw-add">
-      <input type="text" id="kwInput" placeholder="e.g. private Christian school San Diego">
+      <input type="text" id="kwInput" placeholder="e.g. private school Chula Vista">
       <button class="btn" id="kwAddBtn">Add keyword</button>
     </div>
   </details>
@@ -155,6 +171,21 @@
 <!-- 5 · Preview & publish -->
 <section class="step" id="stepPublish">
   <h2><span class="stepnum">5</span> Preview &amp; publish</h2>
+  <div class="whenbox">
+    <label>When should this go on the website?</label>
+    <div class="chips" id="whenChips">
+      <button class="chip on" data-when="now">Publish right now</button>
+      <button class="chip" data-when="future">Schedule for later</button>
+      <button class="chip" data-when="past">Back-date it</button>
+    </div>
+    <div id="whenPicker" class="hidden">
+      <label id="whenLabel">Date and time <span class="hint" id="tzHint"></span>
+        <input type="datetime-local" id="fWhen">
+      </label>
+      <p class="hint" id="whenEcho"></p>
+    </div>
+  </div>
+
   <div class="pubbar">
     <button class="btn" id="previewBtn">Preview the post</button>
     <button class="btn primary big" id="publishBtn">Publish to christianunified.org</button>
@@ -167,7 +198,8 @@
     <p id="pubStatus"></p>
   </div>
   <div id="pubDone" class="hidden card">
-    <h3>It's live! 🎉</h3>
+    <h3 id="pubDoneTitle">It's live! 🎉</h3>
+    <p class="hint" id="pubDoneNote"></p>
     <p><a id="pubLink" href="#" target="_blank" rel="noopener"></a></p>
   </div>
 </section>
@@ -182,6 +214,43 @@
     <button class="btn ghost close" data-close="picker">Cancel</button>
   </div>
 </div>
+
+<!-- Crop -->
+<div id="cropModal" class="overlay hidden">
+  <div class="card modal wide">
+    <h3>Crop this photo</h3>
+    <label>Shape <span class="hint">— pick one to lock the crop to it, or stay on Free</span></label>
+    <div id="cropRatios" class="chips"></div>
+    <div id="cropStage">
+      <img id="cropImg" alt="">
+      <div id="cropBox">
+        <span class="ch nw" data-h="nw"></span><span class="ch ne" data-h="ne"></span>
+        <span class="ch sw" data-h="sw"></span><span class="ch se" data-h="se"></span>
+      </div>
+    </div>
+    <p class="hint">Drag the middle to move it, a corner to resize. <span id="cropSize"></span></p>
+    <div class="modal-actions">
+      <button class="btn ghost" id="cropReset">Reset to original</button>
+      <button class="btn ghost" data-close="cropModal">Cancel</button>
+      <button class="btn primary" id="cropApply">Apply crop</button>
+    </div>
+  </div>
+</div>
+
+<!-- What to do with the photo left behind -->
+<div id="rowChoiceModal" class="overlay hidden">
+  <div class="card modal narrow">
+    <h3 id="rcTitle">One photo left in that row</h3>
+    <div id="rcPhotos"></div>
+    <p class="hint" id="rcNote"></p>
+    <div class="rc-actions">
+      <button class="btn primary" id="rcAlone">Let it stand alone</button>
+      <button class="btn" id="rcSwap">Swap in another photo</button>
+      <button class="btn ghost" id="rcUndo">Undo — put the other one back</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- Paste words modal -->
 <div id="wordsModal" class="overlay hidden">
@@ -204,15 +273,18 @@
     <label>Alt text <span class="hint">(describe the photo for Google &amp; screen readers)</span>
       <input type="text" id="pmAlt">
     </label>
+    <button class="btn" id="pmAltAi">✨ Write the alt text for this photo</button>
+    <span class="hint" id="pmAltState"></span>
     <label>File name <span class="hint">(keywords help SEO)</span>
       <input type="text" id="pmFilename">
     </label>
     <label>Caption <span class="hint">(optional — stored in WordPress with the photo)</span>
       <input type="text" id="pmCaption">
     </label>
-    <p class="hint">Every published photo is automatically stamped with the photo credit,
+    <p class="hint">Every published photo is automatically stamped with your credit,
       copyright and keywords inside the file itself.</p>
     <div class="modal-actions">
+      <button class="btn primary" id="pmCropBtn">Crop this photo…</button>
       <button class="btn" id="pmFeatureBtn">Use as featured image</button>
       <button class="btn danger" id="pmRemoveBtn">Remove photo</button>
       <button class="btn primary" data-close="photoModal">Done</button>
@@ -239,6 +311,6 @@
   </div>
 </div>
 
-<script src="app.js?v=1"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>

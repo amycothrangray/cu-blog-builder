@@ -1,7 +1,7 @@
 /* Christian Unified Blog Builder — builds a real photo blog post and publishes
    it to christianunified.org. Same app as the Amy Gray Photography builder,
-   pointed at the school: one passphrase, then drag in photos, paste the words,
-   press ✨ for SEO, press Publish. No accounts, no installs. */
+   pointed at the school and without the family-session photo analysis: one
+   passphrase, then drag in photos, paste the words, press ✨, press Publish. */
 'use strict';
 
 const BACKEND = 'https://dolphin-app-f4t5q.ondigitalocean.app';
@@ -18,14 +18,38 @@ const DEFAULT_CREDIT = ORG;
 const creditOf = () => ((state && state.credit) || '').trim() || DEFAULT_CREDIT;
 const rightsOf = () => `© ${new Date().getFullYear()} ${creditOf()}. All rights reserved.`;
 
-/* Keywords the school wants to rank for. Editable in the app; kept in this
-   browser and shared across every post you write on this computer. */
+/* Keywords the school wants to rank for — what a parent actually types when
+   they are shopping for a school. Editable in the app; kept in this browser.
+   Deliberately short (2-5 words): the SEO scorecard looks for the focus keyword
+   verbatim in the title, slug, meta, first paragraph and alt text, and a long
+   phrase can never pass those checks. Money terms first. Everything here is
+   something the school can honestly claim — no accreditation terms, because
+   none are stated on the site. */
 const DEFAULT_KEYWORDS = [
-  'Christian school San Diego', 'private school El Cajon',
-  'Christian high school San Diego', 'Christian school Chula Vista',
-  'private Christian school San Diego', 'Christian elementary school El Cajon',
-  'Christian junior high San Diego', 'private schools near me San Diego',
-  'Christian education San Diego', 'Christian Unified Schools',
+  // Geography + type: real search volume, real intent.
+  'Christian school San Diego',
+  'Christian school El Cajon',
+  'private school El Cajon',
+  'Christian school Chula Vista',
+  'private school Chula Vista',
+  'private schools San Diego',
+  'East County private school',
+  // By level — highest intent, because the parent already knows the age.
+  'Christian high school San Diego',
+  'Christian junior high San Diego',
+  'Christian elementary school San Diego',
+  'TK and kindergarten San Diego',
+  // Distinctives, in the school's own words (Vision & Mission page).
+  'college preparatory Christian school',
+  'biblical worldview education',
+  'best private schools in San Diego',
+  // What blog posts are actually about, so a story can earn one honestly.
+  'Christian school athletics San Diego',
+  'Christian school arts program',
+  'Christian school student life',
+  // Brand terms — cheap to win, and they convert.
+  'Christian Unified Schools',
+  'Christian High School Patriots',
 ];
 function getKeywords() {
   try {
@@ -65,6 +89,7 @@ function freshState() {
     inlineLinks: [],
     featuredPid: null,
     publishedUrl: '',
+    when: 'now', whenAt: '',
   };
 }
 
@@ -228,6 +253,286 @@ function embedXmp(dataUrl, fields) {
   }
 }
 
+
+/* ---------------------------------------------------------------- cropping
+   Crops are non-destructive: the untouched resized file is kept as `origFull`
+   the first time a crop is applied, and every later crop is recomputed from it,
+   so you can re-crop or reset without losing quality. */
+const CROP_RATIOS = [
+  { id: 'free', label: 'Free', r: null },
+  { id: 'square', label: 'Square 1:1', r: 1 },
+  { id: 'p45', label: 'Portrait 4:5', r: 4 / 5 },
+  { id: 'p23', label: 'Portrait 2:3', r: 2 / 3 },
+  { id: 'l32', label: 'Landscape 3:2', r: 3 / 2 },
+  { id: 'l169', label: 'Wide 16:9', r: 16 / 9 },
+];
+let cropPid = null;
+let cropBox = null;      // fractions of the source image: {x, y, w, h}
+let cropRatio = null;    // null = free
+let cropImg = null;      // the source Image element
+
+function sourceOf(pid) {
+  const p = state.photos[pid];
+  return p.origFull || p.full;
+}
+
+function openCrop(pid) {
+  cropPid = pid;
+  const p = state.photos[pid];
+  cropImg = new Image();
+  cropImg.onload = () => {
+    const existing = p.crop;
+    cropRatio = p.cropRatio != null ? p.cropRatio : null;
+    cropBox = existing ? { ...existing } : { x: 0, y: 0, w: 1, h: 1 };
+    renderRatioButtons();
+    // Show it first — the stage has no measurable size while it is hidden,
+    // which would place the crop box at zero width. Force a reflow and draw
+    // synchronously; requestAnimationFrame can be deferred by the browser.
+    $('cropModal').classList.remove('hidden');
+    void $('cropStage').offsetWidth;
+    drawCrop();
+    setTimeout(drawCrop, 50);   // catch late font/layout shifts
+  };
+  cropImg.src = sourceOf(pid);
+}
+
+function renderRatioButtons() {
+  const box = $('cropRatios');
+  box.innerHTML = '';
+  CROP_RATIOS.forEach((opt) => {
+    const b = document.createElement('button');
+    const on = (opt.r === null && cropRatio === null) ||
+               (opt.r !== null && cropRatio !== null && Math.abs(opt.r - cropRatio) < 0.001);
+    b.className = 'chip' + (on ? ' on' : '');
+    b.textContent = opt.label;
+    b.onclick = () => { cropRatio = opt.r; applyRatio(); renderRatioButtons(); drawCrop(); };
+    box.appendChild(b);
+  });
+}
+
+/* Reshape the current box to the chosen ratio, keeping it centred and inside. */
+function applyRatio() {
+  if (cropRatio === null || !cropImg) return;
+  const iw = cropImg.naturalWidth, ih = cropImg.naturalHeight;
+  const cx = cropBox.x + cropBox.w / 2, cy = cropBox.y + cropBox.h / 2;
+  // Work in pixels so the ratio is true regardless of the image's own shape.
+  let wPx = cropBox.w * iw, hPx = cropBox.h * ih;
+  if (wPx / hPx > cropRatio) wPx = hPx * cropRatio; else hPx = wPx / cropRatio;
+  let w = wPx / iw, h = hPx / ih;
+  // Grow to fill if the box got small, then clamp inside the image.
+  const scale = Math.min(1 / w, 1 / h, 1.6);
+  w *= scale; h *= scale;
+  if (w > 1) { h *= 1 / w; w = 1; }
+  if (h > 1) { w *= 1 / h; h = 1; }
+  cropBox = {
+    w, h,
+    x: Math.min(Math.max(cx - w / 2, 0), 1 - w),
+    y: Math.min(Math.max(cy - h / 2, 0), 1 - h),
+  };
+}
+
+function drawCrop() {
+  const stage = $('cropStage');
+  const img = $('cropImg');
+  img.src = cropImg.src;
+  const box = $('cropBox');
+  // Fit the image inside the stage, then place the box over it.
+  const sw = stage.clientWidth, sh = stage.clientHeight;
+  const iw = cropImg.naturalWidth, ih = cropImg.naturalHeight;
+  if (!sw || !sh || !iw || !ih) return;   // nothing measurable yet
+  const scale = Math.min(sw / iw, sh / ih);
+  const dw = iw * scale, dh = ih * scale;
+  const ox = (sw - dw) / 2, oy = (sh - dh) / 2;
+  img.style.width = dw + 'px'; img.style.height = dh + 'px';
+  img.style.left = ox + 'px'; img.style.top = oy + 'px';
+  box.style.left = (ox + cropBox.x * dw) + 'px';
+  box.style.top = (oy + cropBox.y * dh) + 'px';
+  box.style.width = (cropBox.w * dw) + 'px';
+  box.style.height = (cropBox.h * dh) + 'px';
+  stage.dataset.ox = ox; stage.dataset.oy = oy;
+  stage.dataset.dw = dw; stage.dataset.dh = dh;
+  const px = Math.round(cropBox.w * iw), py = Math.round(cropBox.h * ih);
+  $('cropSize').textContent = `${px} × ${py} px`;
+}
+
+/* Pointer handling: drag the middle to move, a corner to resize. */
+function startCropDrag(e, mode) {
+  e.preventDefault();
+  const stage = $('cropStage');
+  const dw = +stage.dataset.dw, dh = +stage.dataset.dh;
+  const startX = e.clientX, startY = e.clientY;
+  const start = { ...cropBox };
+  const iw = cropImg.naturalWidth, ih = cropImg.naturalHeight;
+
+  const move = (ev) => {
+    const fx = (ev.clientX - startX) / dw;
+    const fy = (ev.clientY - startY) / dh;
+    if (mode === 'move') {
+      cropBox.x = Math.min(Math.max(start.x + fx, 0), 1 - start.w);
+      cropBox.y = Math.min(Math.max(start.y + fy, 0), 1 - start.h);
+    } else {
+      let { x, y, w, h } = start;
+      if (mode.includes('e')) w = start.w + fx;
+      if (mode.includes('s')) h = start.h + fy;
+      if (mode.includes('w')) { w = start.w - fx; x = start.x + fx; }
+      if (mode.includes('n')) { h = start.h - fy; y = start.y + fy; }
+      const minW = 40 / dw, minH = 40 / dh;
+      w = Math.max(w, minW); h = Math.max(h, minH);
+      if (cropRatio !== null) {
+        // Keep the locked ratio, driven by whichever edge moved most.
+        const wPx = w * iw, hPx = h * ih;
+        if (Math.abs(fx) > Math.abs(fy)) h = (wPx / cropRatio) / ih;
+        else w = (hPx * cropRatio) / iw;
+        if (mode.includes('w')) x = start.x + start.w - w;
+        if (mode.includes('n')) y = start.y + start.h - h;
+      }
+      // Clamp inside the image.
+      x = Math.min(Math.max(x, 0), 1 - Math.min(w, 1));
+      y = Math.min(Math.max(y, 0), 1 - Math.min(h, 1));
+      w = Math.min(w, 1 - x); h = Math.min(h, 1 - y);
+      cropBox = { x, y, w, h };
+    }
+    drawCrop();
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
+/* Render the crop into new full/thumb images for one photo. */
+function renderCrop(pid, box, ratioUsed) {
+  return new Promise((resolve) => {
+    const p = state.photos[pid];
+    const img = new Image();
+    img.onload = () => {
+      if (!p.origFull) p.origFull = p.full;      // keep the untouched original
+      const iw = img.naturalWidth, ih = img.naturalHeight;
+      const sx = Math.round(box.x * iw), sy = Math.round(box.y * ih);
+      const sw = Math.max(1, Math.round(box.w * iw)), sh = Math.max(1, Math.round(box.h * ih));
+      const make = (edge, q) => {
+        const sc = Math.min(1, edge / Math.max(sw, sh));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(sw * sc));
+        c.height = Math.max(1, Math.round(sh * sc));
+        c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        return { url: c.toDataURL('image/jpeg', q), w: c.width, h: c.height };
+      };
+      const full = make(MAX_EDGE, JPEG_Q);
+      const thumb = make(THUMB_EDGE, 0.75);
+      p.full = full.url; p.w = full.w; p.h = full.h;
+      p.thumb = thumb.url;
+      p.crop = { ...box };
+      p.cropRatio = ratioUsed;
+      p.mediaId = null; p.mediaUrl = null;   // must be re-uploaded once cropped
+      resolve();
+    };
+    img.src = sourceOf(pid);
+  });
+}
+
+async function applyCrop() {
+  if (!cropPid) return;
+  $('cropApply').disabled = true;
+  await renderCrop(cropPid, cropBox, cropRatio);
+  $('cropApply').disabled = false;
+  $('cropModal').classList.add('hidden');
+  renderTray(); renderBlocks(); touch();
+}
+
+function resetCrop() {
+  const p = state.photos[cropPid];
+  if (p.origFull) {
+    p.full = p.origFull;
+    delete p.origFull;
+  }
+  delete p.crop; delete p.cropRatio;
+  const img = new Image();
+  img.onload = () => {
+    p.w = img.naturalWidth; p.h = img.naturalHeight;
+    const c = document.createElement('canvas');
+    const sc = Math.min(1, THUMB_EDGE / Math.max(p.w, p.h));
+    c.width = Math.round(p.w * sc); c.height = Math.round(p.h * sc);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    p.thumb = c.toDataURL('image/jpeg', 0.75);
+    p.mediaId = null; p.mediaUrl = null;
+    $('cropModal').classList.add('hidden');
+    renderTray(); renderBlocks(); touch();
+  };
+  img.src = p.full;
+}
+
+/* Square off one row at a time — Amy lays out a diptych, triptych or a row of
+   four as squares, rather than squaring a whole post. Toggles back. */
+async function centreSquare(pid) {
+  const img = new Image();
+  await new Promise((r) => { img.onload = r; img.src = sourceOf(pid); });
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const side = Math.min(iw, ih);
+  await renderCrop(pid, {
+    x: (iw - side) / 2 / iw, y: (ih - side) / 2 / ih, w: side / iw, h: side / ih,
+  }, 1);
+}
+
+async function restorePhoto(pid) {
+  const p = state.photos[pid];
+  if (!p.origFull) return;
+  p.full = p.origFull;
+  delete p.origFull; delete p.crop; delete p.cropRatio;
+  p.mediaId = null; p.mediaUrl = null;
+  const img = new Image();
+  await new Promise((r) => { img.onload = r; img.src = p.full; });
+  p.w = img.naturalWidth; p.h = img.naturalHeight;
+  const c = document.createElement('canvas');
+  const sc = Math.min(1, THUMB_EDGE / Math.max(p.w, p.h));
+  c.width = Math.round(p.w * sc); c.height = Math.round(p.h * sc);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  p.thumb = c.toDataURL('image/jpeg', 0.75);
+}
+
+/* Shuffle the photos inside one row. Always lands on a different order. */
+function mixRow(block) {
+  const filled = block.slots.filter(Boolean);
+  if (filled.length < 2) { layoutNote('That row needs at least two photos to mix.'); return; }
+  const next = filled.slice();
+  if (next.length === 2) {
+    next.reverse();
+  } else {
+    for (let i = next.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [next[i], next[j]] = [next[j], next[i]];
+    }
+    // A shuffle can land back where it started; nudge it so the click always shows.
+    if (next.every((pid, i) => pid === filled[i])) next.push(next.shift());
+  }
+  const empties = block.slots.length - next.length;
+  block.slots = next.concat(new Array(Math.max(0, empties)).fill(null));
+  renderBlocks(); renderTray(); touch();
+}
+
+function rowIsSquare(block) {
+  const pids = block.slots.filter(Boolean);
+  return pids.length > 0 && pids.every((pid) => state.photos[pid].cropRatio === 1);
+}
+
+async function toggleRowSquares(block, btn) {
+  const pids = block.slots.filter(Boolean);
+  if (!pids.length) { layoutNote('Put some photos in that row first.'); return; }
+  const undo = rowIsSquare(block);
+  if (btn) btn.disabled = true;
+  for (const pid of pids) {
+    if (undo) await restorePhoto(pid);
+    else await centreSquare(pid);
+  }
+  if (btn) btn.disabled = false;
+  layoutNote(undo
+    ? `Put ${pids.length} photo${pids.length === 1 ? '' : 's'} back to their original shape.`
+    : `Squared off ${pids.length} photo${pids.length === 1 ? '' : 's'} in that row. Click a photo to fine-tune its crop.`);
+  renderBlocks(); renderTray(); touch();
+}
+
 /* ----------------------------------------------------------------- photos */
 function loadFiles(files) {
   [...files].forEach((f) => {
@@ -278,10 +583,40 @@ function renderTray() {
     d.className = 'thumb' + (used.has(pid) ? ' used' : '');
     d.innerHTML = `<img src="${p.thumb}" alt="">` +
       (state.featuredPid === pid ? '<span class="star">★</span>' : '') +
+      (p.crop ? `<span class="cropped">${p.cropRatio === 1 ? 'square' : 'cropped'}</span>` : '') +
       (used.has(pid) ? '<span class="flag">in post</span>' : '');
     d.onclick = () => openPhotoModal(pid);
     tray.appendChild(d);
   });
+}
+
+
+/* Write alt text (and a filename) for the one photo that's open. */
+async function altForOnePhoto() {
+  if (!modalPid) return;
+  const btn = $('pmAltAi');
+  btn.disabled = true;
+  $('pmAltState').textContent = 'Looking at this photo…';
+  try {
+    const r = await api(API + '/alt', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: state.title, location: state.location, keywords: getKeywords(),
+        thumbs: [{ dataBase64: state.photos[modalPid].thumb.split(',')[1] }],
+      }),
+    });
+    const p = state.photos[modalPid];
+    if (r.altTexts && r.altTexts[0]) { p.alt = r.altTexts[0]; $('pmAlt').value = p.alt; }
+    if (r.imageFilenames && r.imageFilenames[0]) {
+      p.filename = slugify(r.imageFilenames[0]);
+      $('pmFilename').value = p.filename;
+    }
+    $('pmAltState').textContent = 'Done — edit it if you like.';
+    renderTray(); renderSeoCheck(); touch();
+  } catch (e) {
+    $('pmAltState').textContent = 'Could not write it just now (' + e.message + ').';
+  }
+  btn.disabled = false;
 }
 
 let modalPid = null;
@@ -292,14 +627,16 @@ function openPhotoModal(pid) {
   $('pmAlt').value = p.alt;
   $('pmFilename').value = p.filename;
   $('pmCaption').value = p.caption || '';
+  $('pmAltState').textContent = '';
   $('photoModal').classList.remove('hidden');
 }
 
 /* ----------------------------------------------------------------- blocks */
 function addBlock(kind, at) {
+  const sizes = { row1: 1, row2: 2, row3: 3, row4: 4 };
   const b = kind === 'text' ? { type: 'text', text: '' }
     : kind === 'heading' ? { type: 'heading', text: '' }
-    : { type: 'row', slots: new Array(kind === 'row1' ? 1 : kind === 'row2' ? 2 : 3).fill(null) };
+    : { type: 'row', slots: new Array(sizes[kind] || 1).fill(null) };
   if (at == null) state.blocks.push(b); else state.blocks.splice(at, 0, b);
   renderBlocks(); touch();
 }
@@ -308,12 +645,17 @@ function renderBlocks() {
   const box = $('blocks');
   box.innerHTML = '';
   if (!state.blocks.length) {
-    box.innerHTML = '<p class="hint">Nothing here yet — add a photo row or paste the write-up to begin.</p>';
+    box.innerHTML = '<p class="hint">Nothing here yet — add a photo row or paste Amy\'s words to begin.</p>';
   }
   state.blocks.forEach((b, i) => {
     const d = document.createElement('div');
     d.className = 'block';
+    const rowTool = b.type === 'row'
+      ? `<button title="Mix it — shuffle the photos in this row" data-act="mix">⇄</button>
+         <button title="${rowIsSquare(b) ? 'Back to original shapes' : 'Make this row square'}" data-act="sq">${rowIsSquare(b) ? '▢' : '▣'}</button>`
+      : '';
     const tools = `<div class="tools">
+      ${rowTool}
       <button title="Move up" data-act="up">↑</button>
       <button title="Move down" data-act="down">↓</button>
       <button title="Delete" data-act="del">✕</button></div>`;
@@ -328,7 +670,9 @@ function renderBlocks() {
       d.querySelector('input').oninput = (e) => { b.text = e.target.value; touch(); };
     } else {
       const row = document.createElement('div');
-      row.className = 'photo-row';
+      const filled = b.slots.filter(Boolean);
+      const lonelyVertical = filled.length === 1 && isVertical(filled[0]);
+      row.className = 'photo-row' + (lonelyVertical ? ' lonely' : '');
       b.slots.forEach((pid, si) => {
         const slot = document.createElement('div');
         slot.className = 'slot';
@@ -338,12 +682,17 @@ function renderBlocks() {
           slot.style.aspectRatio = `${p.w} / ${p.h}`;
           slot.innerHTML = `<img src="${p.thumb}" alt="">
             <div class="slot-hover">
-              <button data-s="swap">Swap</button>
-              <button data-s="clear">Remove</button>
+              <button data-s="crop" title="Crop this photo">⬚ Crop</button>
+              <button data-s="info" title="Alt text, file name, caption">ⓘ Details</button>
+              <button data-s="swap" title="Put a different photo here">⇆ Swap</button>
+              <button data-s="clear" title="Take this photo out of the row">✕ Remove</button>
             </div>`;
+          slot.querySelector('[data-s=crop]').onclick = (e) => { e.stopPropagation(); openCrop(pid); };
+          slot.querySelector('[data-s=info]').onclick = (e) => { e.stopPropagation(); openPhotoModal(pid); };
           slot.querySelector('[data-s=swap]').onclick = (e) => { e.stopPropagation(); openPicker(b, si); };
           slot.querySelector('[data-s=clear]').onclick = (e) => {
-            e.stopPropagation(); b.slots[si] = null; renderBlocks(); renderTray(); touch();
+            e.stopPropagation();
+            removeFromRow(b, si);
           };
         } else {
           slot.textContent = '+ photo';
@@ -353,18 +702,245 @@ function renderBlocks() {
       });
       d.innerHTML = tools;
       d.appendChild(row);
+      if (lonelyVertical) {
+        const warn = document.createElement('p');
+        warn.className = 'hint lonely-note';
+        warn.textContent = 'Verticals are never shown alone — add another photo to this row.';
+        d.appendChild(warn);
+      }
     }
     d.querySelectorAll('.tools button').forEach((btn) => {
       btn.onclick = () => {
         const act = btn.dataset.act;
+        if (act === 'mix') { mixRow(b); return; }
+        if (act === 'sq') { toggleRowSquares(b, btn); return; }
         if (act === 'del') state.blocks.splice(i, 1);
         if (act === 'up' && i > 0) [state.blocks[i - 1], state.blocks[i]] = [state.blocks[i], state.blocks[i - 1]];
         if (act === 'down' && i < state.blocks.length - 1) [state.blocks[i + 1], state.blocks[i]] = [state.blocks[i], state.blocks[i + 1]];
         renderBlocks(); renderTray(); touch();
       };
     });
+    wireDrag(d, i);
     box.appendChild(d);
   });
+  renderOutline();
+}
+
+
+/* Brief explanatory line under the layout buttons. */
+let noteTimer = null;
+function layoutNote(msg) {
+  const el = $('layoutNote');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  clearTimeout(noteTimer);
+  noteTimer = setTimeout(() => el.classList.add('hidden'), 6000);
+}
+
+
+/* Repair any row that ended up with a single vertical: merge it into a
+   neighbouring row that has room, or pair it with an unused photo. */
+function fixLoneVerticals() {
+  let fixed = 0;
+  const used = usedPids();
+  const spare = state.photoOrder.filter((pid) => !used.has(pid));
+  for (let i = state.blocks.length - 1; i >= 0; i--) {
+    const b = state.blocks[i];
+    if (b.type !== 'row') continue;
+    const filled = b.slots.filter(Boolean);
+    if (filled.length !== 1 || !isVertical(filled[0]) || mustStandAlone(filled[0])) continue;
+
+    // 1. a spare photo, preferring another vertical, joins it
+    const spareIdx = spare.findIndex(isVertical);
+    const pick = spareIdx >= 0 ? spare.splice(spareIdx, 1)[0] : spare.shift();
+    if (pick) { b.slots = [filled[0], pick]; fixed++; continue; }
+
+    // 2. otherwise fold it into an adjacent row that isn't full
+    const neighbours = [state.blocks[i - 1], state.blocks[i + 1]]
+      .filter((n) => n && n.type === 'row' && n.slots.filter(Boolean).length < 3);
+    if (neighbours.length) {
+      neighbours[0].slots = neighbours[0].slots.filter(Boolean).concat(filled[0]);
+      state.blocks.splice(i, 1);
+      fixed++;
+    }
+  }
+  if (fixed) { renderBlocks(); renderTray(); touch(); }
+  return fixed;
+}
+
+
+/* ------------------------------------------------------- drag to reorder
+   Blocks are draggable, and a small outline of the whole post floats beside
+   them so it stays obvious where you are and what else is in the post. */
+let dragFrom = null;
+
+function moveBlock(from, to) {
+  if (from === to || from < 0 || to < 0 || from >= state.blocks.length) return;
+  const [b] = state.blocks.splice(from, 1);
+  state.blocks.splice(to > from ? to - 1 : to, 0, b);
+  renderBlocks(); touch();
+}
+
+function clearDragMarks() {
+  document.querySelectorAll('.block, .omini').forEach((b) =>
+    b.classList.remove('dragging', 'over-top', 'over-bottom'));
+}
+
+/* Used by both the full blocks and the little outline, so a block can be picked
+   up in either one and dropped in the other. */
+function wireDrag(el, index) {
+  el.draggable = true;
+  el.addEventListener('dragstart', (e) => {
+    dragFrom = index;
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(index)); } catch { /* Safari */ }
+  });
+  el.addEventListener('dragend', () => {
+    dragFrom = null;
+    clearDragMarks();
+  });
+  el.addEventListener('dragover', (e) => {
+    if (dragFrom === null) return;
+    e.preventDefault();
+    const r = el.getBoundingClientRect();
+    const after = (e.clientY - r.top) > r.height / 2;
+    el.classList.toggle('over-bottom', after);
+    el.classList.toggle('over-top', !after);
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('over-top', 'over-bottom'));
+  el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    el.classList.remove('over-top', 'over-bottom');
+    if (dragFrom === null) return;
+    const r = el.getBoundingClientRect();
+    const after = (e.clientY - r.top) > r.height / 2;
+    moveBlock(dragFrom, index + (after ? 1 : 0));
+    dragFrom = null;
+  });
+}
+
+/* The little map of the post. */
+function renderOutline() {
+  const box = $('outlineList');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!state.blocks.length) {
+    box.innerHTML = '<p class="hint">Nothing yet.</p>';
+    $('outlineCount').textContent = '';
+    return;
+  }
+  state.blocks.forEach((b, i) => {
+    const item = document.createElement('div');
+    item.className = 'omini';
+    if (b.type === 'row') {
+      const filled = b.slots.filter(Boolean);
+      const strip = document.createElement('div');
+      strip.className = 'ostrip';
+      filled.forEach((pid) => {
+        const im = document.createElement('img');
+        im.src = state.photos[pid] ? state.photos[pid].thumb : '';
+        im.className = isVertical(pid) ? 'v' : 'h';
+        strip.appendChild(im);
+      });
+      if (!filled.length) strip.innerHTML = '<span class="hint">empty row</span>';
+      item.appendChild(strip);
+      const tag = document.createElement('span');
+      tag.className = 'otag';
+      tag.textContent = ['—', 'single', 'diptych', 'triptych', 'four'][filled.length] || `${filled.length} across`;
+      if (filled.length && rowIsSquare(b)) tag.textContent += ' ▣';
+      item.appendChild(tag);
+    } else {
+      item.classList.add('otext');
+      item.textContent = (b.type === 'heading' ? '\u275D ' : '') + (b.text || '(empty)').slice(0, 46);
+    }
+    item.onclick = () => {
+      const target = document.querySelectorAll('#blocks .block')[i];
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.add('flash');
+        setTimeout(() => target.classList.remove('flash'), 1200);
+      }
+    };
+    wireDrag(item, i);
+    box.appendChild(item);
+  });
+  const rows = state.blocks.filter((b) => b.type === 'row').length;
+  const photos = state.blocks.reduce((n, b) => n + (b.type === 'row' ? b.slots.filter(Boolean).length : 0), 0);
+  $('outlineCount').textContent = `${photos} photos \u00b7 ${rows} rows`;
+}
+
+
+/* Taking a photo out of a row. If it leaves exactly one photo behind, ask what
+   should happen to it rather than silently leaving a gap. */
+let rowChoice = null;   // { block, slotIndex, removedPid, remainingPid }
+
+function removeFromRow(block, slotIndex) {
+  const removedPid = block.slots[slotIndex];
+  const before = block.slots.filter(Boolean).length;
+  block.slots[slotIndex] = null;
+  const left = block.slots.filter(Boolean);
+
+  // Any removal that leaves a hole gets a question — a three going to two
+  // should become a proper diptych, not a row with a gap in it.
+  if (before > 1 && left.length >= 1 && left.length < block.slots.length) {
+    rowChoice = { block, slotIndex, removedPid, remaining: left };
+    showRowChoice();
+    return;
+  }
+  renderBlocks(); renderTray(); touch();
+}
+
+function showRowChoice() {
+  const { remaining } = rowChoice;
+  const n = remaining.length;
+  const NAMES = ['', 'on its own', 'a diptych', 'a triptych', 'a row of four'];
+
+  $('rcTitle').textContent = n === 1
+    ? 'One photo left in that row'
+    : `${n === 2 ? 'Two' : n === 3 ? 'Three' : n} photos left in that row`;
+
+  // Show what is actually left, not just the first one.
+  const grid = $('rcPhotos');
+  grid.innerHTML = '';
+  remaining.forEach((pid) => {
+    const im = document.createElement('img');
+    im.src = state.photos[pid].thumb;
+    grid.appendChild(im);
+  });
+
+  // The vertical rule only bites when a single photo would be left behind.
+  const lonelyVertical = n === 1 && isVertical(remaining[0]) && !mustStandAlone(remaining[0]);
+  $('rcAlone').disabled = lonelyVertical;
+  $('rcAlone').textContent = lonelyVertical
+    ? 'Can\u2019t stand alone (vertical)'
+    : n === 1 ? 'Let it stand alone' : `Make it ${NAMES[n] || 'that size'}`;
+  $('rcNote').textContent = lonelyVertical
+    ? 'Vertical photos are never shown alone, so this one needs a partner.'
+    : n === 1
+      ? 'It will fill the width on its own.'
+      : `The row closes up into ${NAMES[n] || 'that size'} — no gap left behind.`;
+  $('rcSwap').textContent = 'Swap in another photo';
+  $('rowChoiceModal').classList.remove('hidden');
+}
+
+function resolveRowChoice(what) {
+  if (!rowChoice) return;
+  const { block, slotIndex, removedPid, remaining } = rowChoice;
+  $('rowChoiceModal').classList.add('hidden');
+  if (what === 'alone') {
+    block.slots = remaining.slice();          // close the gap up
+    renderBlocks(); renderTray(); touch();
+  } else if (what === 'swap') {
+    block.slots = remaining.concat([null]);   // keep one empty spot, at the end
+    renderBlocks(); renderTray(); touch();
+    openPicker(block, remaining.length);
+  } else {                                    // undo
+    block.slots[slotIndex] = removedPid;
+    renderBlocks(); renderTray(); touch();
+  }
+  rowChoice = null;
 }
 
 let pickTarget = null;
@@ -377,10 +953,19 @@ function openPicker(block, slotIndex) {
   order.forEach((pid) => {
     const p = state.photos[pid];
     const d = document.createElement('div');
-    d.className = 'thumb' + (used.has(pid) ? ' used' : '');
-    d.innerHTML = `<img src="${p.thumb}" alt="">` + (used.has(pid) ? '<span class="flag">in post</span>' : '');
+    const soloRow = pickTarget.block.slots.length === 1;
+    const vertical = isVertical(pid);
+    d.className = 'thumb' + (used.has(pid) ? ' used' : '') + (soloRow && vertical ? ' needspair' : '');
+    d.innerHTML = `<img src="${p.thumb}" alt="">`
+      + (used.has(pid) ? '<span class="flag">in post</span>'
+        : (soloRow && vertical ? '<span class="flag">becomes a pair</span>' : ''));
     d.onclick = () => {
       pickTarget.block.slots[pickTarget.slotIndex] = pid;
+      // A vertical is never left standing alone — grow the row into a diptych.
+      if (soloRow && vertical) {
+        pickTarget.block.slots.push(null);
+        layoutNote('Verticals are never shown alone, so that row is now a diptych — drop a second photo in.');
+      }
       $('picker').classList.add('hidden');
       renderBlocks(); renderTray(); touch();
     };
@@ -413,19 +998,77 @@ function addWords(raw) {
   renderBlocks(); touch();
 }
 
+
+
+/* ---------------------------------------------------------------- layout
+   The AI photo analysis that ranked family-session moments is deliberately
+   not part of this app — a school blog wants the photos in the order they
+   were dropped in. What survives are the two shape rules that hold for any
+   photo blog:
+     1. A vertical is never shown alone — it pairs or goes in a three.
+     2. Everything else leans towards single horizontals for rhythm.
+   analysisOf() stays because the row helpers call it; with nothing writing
+   `.analysis` it simply returns {} and those checks fall through. */
+function analysisOf(pid) { return (state.photos[pid] || {}).analysis || {}; }
+function mustStandAlone(pid) { return !!analysisOf(pid).fullGroup; }
+
+/* Rule: a vertical photo is never shown on its own — verticals always sit
+   in a diptych or triptych. Horizontals may stand alone. */
+function isVertical(pid) {
+  const p = state.photos[pid];
+  return !!p && p.h > p.w;
+}
+function loneVerticalRows() {
+  return state.blocks.filter((b) => {
+    if (b.type !== 'row') return false;
+    const filled = b.slots.filter(Boolean);
+    // A whole-group shot always stands alone — that rule wins over this one.
+    return filled.length === 1 && isVertical(filled[0]) && !mustStandAlone(filled[0]);
+  });
+}
+
 function magicLayout() {
   const used = usedPids();
   const free = state.photoOrder.filter((pid) => !used.has(pid));
   if (!free.length) return;
+  // Sizes to reach for, in order, purely for visual rhythm.
   const pattern = [1, 2, 3, 2, 1, 3, 2, 2];
+  const rows = [];
   let pi = 0;
   while (free.length) {
+    const wantsVertical = isVertical(free[0]);
     let n = Math.min(pattern[pi % pattern.length], free.length);
-    // avoid a lonely leftover after a big row
-    if (free.length - n === 1 && n > 1) n -= 1;
-    state.blocks.push({ type: 'row', slots: free.splice(0, n) });
+    if (wantsVertical) {
+      // Must be grouped. Prefer running with the verticals that follow it.
+      let run = 0;
+      while (run < free.length && run < 3 && isVertical(free[run])) run++;
+      n = run >= 3 ? 3 : Math.min(Math.max(2, Math.min(n, 3)), free.length);
+    } else if (n === 1 && free.length > 1 && isVertical(free[1])) {
+      // Leaving a horizontal alone here would strand the vertical behind it
+      // only if nothing follows; harmless otherwise, so keep the single.
+      n = 1;
+    }
+    // Never strand a single vertical at the very end. Prefer shrinking this row
+    // so two are left for a final pair; only grow if shrinking isn't allowed.
+    if (free.length - n === 1 && isVertical(free[free.length - 1])) {
+      const minRow = wantsVertical ? 2 : 1;
+      if (n - 1 >= minRow) n -= 1;
+      else if (n + 1 <= 3) n += 1;
+    }
+    n = Math.min(n, 3, free.length);   // rows never hold more than three
+    rows.push({ type: 'row', slots: free.splice(0, n) });
     pi += 1;
   }
+  // Safety net: fold any lone vertical row into a neighbour.
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const slots = rows[i].slots;
+    if (slots.length !== 1 || !isVertical(slots[0])) continue;
+    const prev = rows[i - 1];
+    const next = rows[i + 1];
+    if (prev && prev.slots.filter(Boolean).length < 3) { prev.slots.push(slots[0]); rows.splice(i, 1); }
+    else if (next && next.slots.filter(Boolean).length < 3) { next.slots.unshift(slots[0]); rows.splice(i, 1); }
+  }
+  rows.forEach((r) => state.blocks.push(r));
   renderBlocks(); renderTray(); touch();
 }
 
@@ -521,12 +1164,11 @@ function renderChosenLinks() {
   }
 }
 /* christianunified.org is mostly staff/parent forms — permission slips, RSVPs,
-   absence reports. Those are never worth linking from a blog post, so when the
-   search box is empty show the public-facing pages first instead of whatever
-   WordPress happens to return first. */
+   absence reports. Never worth linking from a story, so with an empty search
+   box show the public-facing pages first. */
 const FORMY = /sign-?in|permission|absence|rsvp|survey|payment|requisition|registration|observation|agreement|concern|interview|handbook|request|directory|fees|budget|assessment|reimburse|payroll|substitute|thank you|received|sign-?up|\bform\b/i;
-/* Word boundaries matter here: without \b, "Parental Permission" matches
-   "mission" and a permission slip outranks the Missions program page. */
+/* Word boundaries matter: without \b, "Parental Permission" matches "mission"
+   and a permission slip outranks the Missions program page. */
 const READERLY = /\btours?\b|\badmissions?\b|\bapply\b|\benroll(ment)?\b|\babout\b|\bcampus\b|\bathletics?\b|\barts?\b|\bmusic\b|\bdrama\b|\btheat(er|re)\b|\bchapel\b|\bmissions?\b|\bleadership\b|\bacademics?\b|\bstudent life\b|\bvisit\b|\bcalendar\b|\bspirit\b|\bfaculty\b/i;
 function linkRank(title) {
   const t = decode(title || '');
@@ -564,7 +1206,7 @@ async function aiSuggest() {
   $('aiState').textContent = 'Looking at the photos and words… (about 20 seconds)';
   try {
     const text = state.blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
-    // A few thumbnails give the model a feel for the session; alt text for every
+    // A few thumbnails give the model a feel for the event; alt text for every
     // photo is written separately in batches (see writeAllAlts).
     const used = usedPids();
     const sample = state.photoOrder.filter((p) => used.size === 0 || used.has(p)).slice(0, 6);
@@ -738,7 +1380,7 @@ function renderSeoCheck() {
 
 /* --------------------------------------------------------- HTML generation */
 /* Best "come see us" page on the school site, for the closing line. Tried in
-   priority order — a district-wide "Schedule a Tour" beats one campus's page. */
+   priority order — a district-wide tour page beats one campus's. */
 function tourUrl() {
   const pick = (re) => siteData.pages.find((x) => re.test(decode(x.title || '')));
   const tries = [
@@ -809,7 +1451,7 @@ function buildPostHtml(urlFor) {
       `<ul style="margin-bottom:0;">${links.join('')}</ul></div>`);
   }
   parts.push(
-    `<p style="margin-top:30px;">Want to see this for your own family? ` +
+    `<p style="margin-top:30px;">Dreaming of photos like these for your own family? ` +
     `<a href="${esc(tourUrl())}">Schedule a campus tour</a>.</p>`);
   parts.push(buildJsonLd(urlFor));
   return parts.join('\n');
@@ -837,16 +1479,63 @@ function buildJsonLd(urlFor) {
 function showPreview() {
   const html = buildPostHtml((p) => p.full);
   $('previewFrame').srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8">
-    <link href="https://fonts.googleapis.com/css2?family=Mulish:wght@300;400&family=Raleway:wght@600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Lora:wght@400..600&family=Jost:wght@300;400&display=swap" rel="stylesheet">
     <style>
-      body{font-family:Mulish,sans-serif;font-weight:300;color:#2c3440;max-width:860px;margin:0 auto;padding:30px 20px;line-height:1.7;}
-      h1,h2{font-family:Raleway,sans-serif;font-weight:700;color:#00244c;}
-      h1{font-size:2rem;} a{color:#0a5aa8;}
+      body{font-family:Jost,sans-serif;font-weight:300;color:#4a4844;max-width:860px;margin:0 auto;padding:30px 20px;line-height:1.7;}
+      h1,h2{font-family:Lora,serif;font-weight:500;}
+      h1{font-size:2rem;} a{color:#c67a85;}
       img{max-width:100%;}
     </style></head><body>
     <h1>${esc(state.title || 'Untitled post')}</h1>
     ${html}</body></html>`;
   $('previewModal').classList.remove('hidden');
+}
+
+
+/* ------------------------------------------------------ publish date/time
+   Times are plain local values interpreted in the website's own timezone
+   (America/Los_Angeles), so the time you pick is the time readers see. */
+function siteNow() {
+  const tz = siteData.timezone || 'America/Los_Angeles';
+  // "sv-SE" gives YYYY-MM-DD HH:MM:SS, which is what datetime-local wants.
+  return new Date().toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T').slice(0, 16);
+}
+function shiftSiteTime(hours) {
+  const tz = siteData.timezone || 'America/Los_Angeles';
+  const d = new Date(Date.now() + hours * 3600 * 1000);
+  return d.toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T').slice(0, 16);
+}
+function prettyWhen(v) {
+  if (!v) return '';
+  const [d, t] = v.split('T');
+  const [y, m, day] = d.split('-').map(Number);
+  const dt = new Date(y, m - 1, day, ...(t || '00:00').split(':').map(Number));
+  return dt.toLocaleString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+}
+function renderWhen() {
+  const mode = state.when || 'now';
+  document.querySelectorAll('#whenChips .chip').forEach((c) => {
+    c.classList.toggle('on', c.dataset.when === mode);
+  });
+  $('whenPicker').classList.toggle('hidden', mode === 'now');
+  const tz = (siteData.timezone || 'America/Los_Angeles').split('/').pop().replace(/_/g, ' ');
+  $('tzHint').textContent = `(${tz} time — the website's clock)`;
+  if (mode !== 'now') {
+    if (!state.whenAt) state.whenAt = mode === 'future' ? shiftSiteTime(24) : siteNow();
+    $('fWhen').value = state.whenAt;
+    const now = siteNow();
+    let warn = '';
+    if (mode === 'future' && state.whenAt <= now) warn = ' ⚠️ that time has already passed — pick a later one.';
+    if (mode === 'past' && state.whenAt > now) warn = ' ⚠️ that is in the future — use “Schedule for later” instead.';
+    $('whenEcho').textContent = (mode === 'future'
+      ? 'Goes live automatically on ' : 'Will appear on the blog dated ') + prettyWhen(state.whenAt) + warn;
+  }
+  const btn = $('publishBtn');
+  btn.textContent = mode === 'future' ? 'Schedule this post'
+    : mode === 'past' ? 'Publish with that date' : 'Publish to christianunified.org';
 }
 
 /* ---------------------------------------------------------------- publish */
@@ -855,6 +1544,19 @@ async function publish() {
   const pids = state.photoOrder.filter((p) => used.has(p));
   if (!state.title.trim()) { alert('Give the post a title first (step 1).'); return; }
   if (!pids.length) { alert('The post has no photos yet — drop some into rows in step 3.'); return; }
+  const mode = state.when || 'now';
+  if (mode !== 'now') {
+    if (!state.whenAt) { alert('Pick the date and time first.'); return; }
+    const now = siteNow();
+    if (mode === 'future' && state.whenAt <= now) {
+      alert('That time has already passed. Pick a later date and time, or choose "Publish right now".');
+      return;
+    }
+    if (mode === 'past' && state.whenAt > now) {
+      alert('That date is in the future. Use "Schedule for later" instead.');
+      return;
+    }
+  }
   let missingAlt = pids.filter((p) => !state.photos[p].alt.trim());
   if (missingAlt.length) {
     const writeNow = confirm(
@@ -910,11 +1612,19 @@ async function publish() {
         metaDesc: state.metaDesc, focusKeyword: state.focusKeyword,
         categories: state.categories,
         featuredMediaId: state.photos[state.featuredPid]?.mediaId || state.photos[pids[0]].mediaId,
-        status: 'publish',
+        status: mode === 'future' ? 'future' : 'publish',
+        ...(mode === 'now' ? {} : { date: state.whenAt + ':00' }),
       }),
     });
     state.publishedUrl = r.link;
-    setBar(1, 'Done!');
+    const scheduled = r.status === 'future';
+    setBar(1, scheduled ? 'Scheduled!' : 'Done!');
+    $('pubDoneTitle').textContent = scheduled
+      ? `Scheduled for ${prettyWhen(state.whenAt)} 🗓`
+      : "It's live! 🎉";
+    $('pubDoneNote').textContent = scheduled
+      ? 'WordPress will put it on the blog automatically at that time — nothing else to do.'
+      : (mode === 'past' ? `Published and dated ${prettyWhen(state.whenAt)}.` : '');
     $('pubLink').textContent = r.link;
     $('pubLink').href = r.link;
     $('pubDone').classList.remove('hidden');
@@ -956,8 +1666,10 @@ async function renderDrafts() {
 function loadState(s) {
   // Older saved drafts predate these fields.
   s.inlineLinks = s.inlineLinks || [];
-  s.secondaryKeywords = s.secondaryKeywords || [];
   s.credit = s.credit || '';
+  s.when = s.when || 'now';
+  s.whenAt = s.whenAt || '';
+  s.secondaryKeywords = s.secondaryKeywords || [];
   state = s;
   slugTouched = !!s.slug && s.slug !== slugify((s.title || '').replace(/\|/g, ' '));
   $('fTitle').value = s.title; $('fLocation').value = s.location;
@@ -971,6 +1683,7 @@ function loadState(s) {
   localStorage.setItem('cuBlogLastDraft', s.id);
   renderCats(); renderTray(); renderBlocks(); renderChosenLinks();
   renderInlineChosen(); renderInlineSuggestions([]); renderKeywordEditor(); renderSeoCheck();
+  renderWhen(); renderOutline();
 }
 
 function exportDesign() {
@@ -1077,6 +1790,35 @@ async function init() {
     $('photoModal').classList.add('hidden');
     renderTray(); renderBlocks(); touch();
   };
+
+  document.querySelectorAll('#whenChips .chip').forEach((c) => {
+    c.onclick = () => {
+      state.when = c.dataset.when;
+      if (state.when === 'now') state.whenAt = '';
+      else state.whenAt = state.when === 'future' ? shiftSiteTime(24) : siteNow();
+      renderWhen(); renderOutline(); touch();
+    };
+  });
+  $('fWhen').oninput = (e) => { state.whenAt = e.target.value; renderWhen(); touch(); };
+
+  $('pmAltAi').onclick = altForOnePhoto;
+  $('pmCropBtn').onclick = () => {
+    $('photoModal').classList.add('hidden');
+    openCrop(modalPid);
+  };
+  $('cropApply').onclick = applyCrop;
+  $('cropReset').onclick = resetCrop;
+  $('cropBox').addEventListener('pointerdown', (e) => {
+    const handle = e.target.dataset ? e.target.dataset.h : null;
+    startCropDrag(e, handle || 'move');
+  });
+  window.addEventListener('resize', () => {
+    if (!$('cropModal').classList.contains('hidden')) drawCrop();
+  });
+
+  $('rcAlone').onclick = () => resolveRowChoice('alone');
+  $('rcSwap').onclick = () => resolveRowChoice('swap');
+  $('rcUndo').onclick = () => resolveRowChoice('undo');
 
   $('previewBtn').onclick = showPreview;
   $('publishBtn').onclick = publish;

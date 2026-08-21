@@ -99,7 +99,11 @@ Upload the updated `server.js` to `github.com/amycothrangray/agp-wallart-backend
 via the web uploader. It auto-deploys to DigitalOcean. The AGP routes are
 unchanged — same paths, same env vars, same behaviour.
 
-**3 — DigitalOcean env vars** (dolphin-app → Settings → App-Level Environment Variables)
+**3 — DigitalOcean env vars** (dolphin-app → Settings → **component** `agp-wallart-backend`
+→ Environment Variables → Edit)
+
+Note: the app-level list is empty — every existing variable lives on the component,
+so the new ones go there too. Tick **Encrypt** on both.
 
 Add these. Nothing existing changes — the AGP variables and routes are untouched.
 
