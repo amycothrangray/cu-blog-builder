@@ -576,7 +576,7 @@ function loadFiles(files) {
    If the JPEGs carry Bridge/Lightroom star ratings in their XMP, the tiles
    show them and one button pre-picks everything rated 3+. */
 const cull = { items: [], filter: 'all', focus: 0, added: new Set(), folder: '' };
-const CULL_THUMB = 320;
+const CULL_VERSION = 'v6';   // shown in the cull header so support can tell which build is running
 
 async function pickFolder() {
   if (window.showDirectoryPicker) {
@@ -615,65 +615,67 @@ function startCull(entries) {
   cull.items = list.map((e) => {
     const key = e.path + ':' + e.file.size;
     const old = prev.get(key);
-    return old || { key, file: e.file, path: e.path, name: e.path.split('/').pop(),
-      thumb: '', rating: 0, label: '', picked: false, big: null };
+    if (old) {
+      // Same folder reopened (e.g. after making it available offline): keep the
+      // pick, but re-read the file — it may have content now that it didn't before.
+      if (old.url) { URL.revokeObjectURL(old.url); old.url = ''; }
+      old.file = e.file; old.ratedChecked = false; old.unreadable = false;
+      return old;
+    }
+    return { key, file: e.file, path: e.path, name: e.path.split('/').pop(),
+      url: '', rating: 0, label: '', ratedChecked: false, picked: false };
   });
+  // object URLs for anything from an earlier folder are no longer needed
+  prev.forEach((it) => { if (!cull.items.includes(it) && it.url) { URL.revokeObjectURL(it.url); it.url = ''; } });
   cull.filter = 'all'; cull.focus = 0;
   document.querySelectorAll('.cullfilters [data-cf]').forEach((b) => b.classList.toggle('on', b.dataset.cf === 'all'));
   $('cullTitle').textContent = `Pick the photos for this post — ${cull.folder}`;
   $('cullModal').classList.remove('hidden');
   renderCull();
-  buildCullThumbs();
+  readCullRatings();
 }
-async function buildCullThumbs() {
-  const pending = cull.items.filter((it) => !it.thumb);
+/* The tile shows the file itself. The browser decodes and scales lazily, only
+   for tiles on screen — no canvases, no thumbnail generation, and it's
+   instant even for a few hundred full-res camera files. */
+function urlFor(it) { if (!it.url) it.url = URL.createObjectURL(it.file); return it.url; }
+async function readCullRatings() {
+  const pending = cull.items.filter((it) => !it.ratedChecked);
   let done = 0;
   const say = () => { $('cullHint').textContent = pending.length && done < pending.length
-    ? `Reading ${done} of ${pending.length} photos…` : `${cull.items.length} photos. Ratings: ${cull.items.filter((i) => i.rating > 0).length} rated.`; };
+    ? `${cull.items.length} photos · checking star ratings ${done}/${pending.length}… · ${CULL_VERSION}`
+    : `${cull.items.length} photos · ${cull.items.filter((i) => i.rating > 0).length} rated · ${CULL_VERSION}`; };
   say();
   const worker = async () => {
     while (pending.length) {
       const it = pending.shift();
       try {
-        [it.thumb, { rating: it.rating, label: it.label }] = await Promise.all([makeCullThumb(it.file), readXmpRating(it.file)]);
-      } catch { it.thumb = 'data:,'; }
-      done++;
-      const tile = document.querySelector(`.ctile[data-key="${CSS.escape(it.key)}"]`);
-      if (tile) paintTile(tile, it);
-      if (done % 10 === 0 || !pending.length) { say(); updateCullButtons(); }
+        it.unreadable = !(await looksLikeImage(it.file));
+        if (!it.unreadable) ({ rating: it.rating, label: it.label } = await readXmpRating(it.file));
+      } catch { /* unrated */ }
+      it.ratedChecked = true; done++;
+      if (it.rating > 0 || it.unreadable) { const tile = document.querySelector(`.ctile[data-key="${CSS.escape(it.key)}"]`); if (tile) paintTile(tile, it); }
+      if (done % 20 === 0 || !pending.length) { say(); updateCullButtons(); }
     }
   };
-  await Promise.all([worker(), worker()]);
+  await Promise.all([worker(), worker(), worker(), worker()]);
   say(); updateCullButtons();
+  const bad = cull.items.filter((it) => it.unreadable).length;
+  if (bad) {
+    $('cullHint').innerHTML = `<strong style="color:#b23b3b">${bad} of ${cull.items.length} photos can't be read</strong> — ` +
+      `they look like Dropbox <em>online-only</em> placeholders (cloud icon in Finder). ` +
+      `In Finder, right-click the folder → <strong>Make Available Offline</strong>, wait for the download, then pick the folder again. · ${CULL_VERSION}`;
+  }
 }
-/* Decode a photo file and scale it to `edge` on its long side. Deliberately the
-   same <img> + canvas path loadFiles() has always used — createImageBitmap on
-   hundreds of full-res camera JPEGs blew Chrome's GPU canvas budget and the
-   tiles came back as bands of other photos. One at a time, small canvas,
-   release the object URL immediately. */
-function decodeScaled(file, edge, quality) {
-  return new Promise((res, rej) => {
-    const img = new Image();
-    img.decoding = 'async';
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      try {
-        const sc = Math.min(1, edge / Math.max(img.naturalWidth, img.naturalHeight));
-        const c = document.createElement('canvas');
-        c.width = Math.max(1, Math.round(img.naturalWidth * sc));
-        c.height = Math.max(1, Math.round(img.naturalHeight * sc));
-        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        const out = c.toDataURL('image/jpeg', quality);
-        c.width = c.height = 0;           // give the canvas memory back right away
-        res(out);
-      } catch (e) { rej(e); }
-      finally { URL.revokeObjectURL(url); img.src = ''; }
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('decode failed')); };
-    img.src = url;
-  });
+/* Real JPEG / PNG / WebP files start with a signature. A Dropbox online-only
+   placeholder, or anything else that isn't really an image, doesn't. */
+async function looksLikeImage(file) {
+  if (!file.size) return false;
+  const b = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  if (b[0] === 0xFF && b[1] === 0xD8) return true;                                    // JPEG
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return true;  // PNG
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45) return true; // WebP
+  return false;
 }
-function makeCullThumb(file) { return decodeScaled(file, CULL_THUMB, 0.72); }
 /* Bridge / Lightroom write xmp:Rating and xmp:Label into the JPEG's XMP packet,
    which sits in the first few hundred KB. Read just that much. */
 async function readXmpRating(file) {
@@ -688,8 +690,10 @@ function cullVisible() {
   return cull.items.filter((it) => cull.filter === 'all' ? true : cull.filter === 'picked' ? it.picked : !it.picked);
 }
 function paintTile(tile, it) {
-  tile.className = 'ctile' + (it.picked ? ' picked' : '') + (cull.added.has(it.key) ? ' inpost' : '');
-  tile.innerHTML = (it.thumb ? `<img src="${it.thumb}" alt="" draggable="false">` : '<span class="pend">reading…</span>') +
+  tile.className = 'ctile' + (it.picked ? ' picked' : '') + (cull.added.has(it.key) ? ' inpost' : '') + (it.unreadable ? ' unreadable' : '');
+  tile.innerHTML = (it.unreadable
+      ? `<span class="pend">⚠️ not downloaded<br><small>online-only in Dropbox</small></span>`
+      : `<img src="${urlFor(it)}" alt="" draggable="false" loading="lazy" decoding="async">`) +
     (it.rating > 0 ? `<span class="star">${'★'.repeat(it.rating)}</span>` : '') +
     `<span class="nm" title="${esc(it.path)}">${esc(it.name)}</span>`;
 }
@@ -739,19 +743,13 @@ function openCullView() {
   $('cullViewName').textContent = `${it.name}${it.rating ? '  ' + '★'.repeat(it.rating) : ''}`;
   $('cullViewPick').textContent = it.picked ? '✓ Picked' : 'Pick';
   $('cullViewPick').classList.toggle('on', it.picked);
-  const img = $('cullViewImg');
-  img.src = it.thumb;               // instant, then sharpen
-  bigFor(it).then((u) => { if (cullVisible()[cull.focus] === it) img.src = u; });
-}
-async function bigFor(it) {
-  if (it.big) return it.big;
-  try { it.big = await decodeScaled(it.file, 1600, 0.85); }
-  catch { it.big = it.thumb; }
-  return it.big;
+  $('cullViewImg').src = urlFor(it);
 }
 function closeCullView() { $('cullView').classList.add('hidden'); setCullFocus(cull.focus, true); }
 function addPickedToPost() {
-  const keep = cull.items.filter((it) => it.picked && !cull.added.has(it.key));
+  const keep = cull.items.filter((it) => it.picked && !cull.added.has(it.key) && !it.unreadable);
+  const skipped = cull.items.filter((it) => it.picked && !cull.added.has(it.key) && it.unreadable).length;
+  if (skipped) alert(`${skipped} picked photo${skipped === 1 ? ' is' : 's are'} online-only in Dropbox and can't be read yet — make the folder available offline, then add ${skipped === 1 ? 'it' : 'them'}.`);
   if (!keep.length) return;
   loadFiles(keep.map((it) => it.file));
   keep.forEach((it) => cull.added.add(it.key));

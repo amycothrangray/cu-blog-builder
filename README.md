@@ -43,8 +43,16 @@ If the JPEGs carry Bridge/Lightroom star ratings (XMP `xmp:Rating`), the tiles s
 the stars and a **★ Pick everything rated 3+** button appears.
 
 Chrome and Edge use the native folder picker (subfolders two levels deep are
-included); other browsers fall back to the standard folder chooser. Thumbnails are
-made in the browser at 320px; nothing leaves your computer until you add a photo.
+included); other browsers fall back to the standard folder chooser. Tiles show the
+files themselves, decoded lazily by the browser; nothing leaves your computer until
+you add a photo.
+
+**Dropbox online-only files.** Dropbox keeps older folders as cloud placeholders
+(cloud icon in Finder). Those can't be read by the browser and show as ⚠️ *not
+downloaded* tiles with a message. Fix: in Finder, right-click the folder → **Make
+Available Offline**, wait for the download, then pick the folder again — picks are
+kept. The cull header shows a build stamp (e.g. `v6`) so support can tell which
+version is running.
 
 A photo that is in the tray but not in any row now shows a **➕ Put it in the post**
 panel when you click it — it drops into the first empty slot, or becomes its own row.
