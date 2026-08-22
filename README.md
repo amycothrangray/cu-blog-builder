@@ -54,8 +54,23 @@ Available Offline**, wait for the download, then pick the folder again — picks
 kept. The cull header shows a build stamp (e.g. `v6`) so support can tell which
 version is running.
 
-A photo that is in the tray but not in any row now shows a **➕ Put it in the post**
-panel when you click it — it drops into the first empty slot, or becomes its own row.
+## Building rows without the buttons
+
+- **Shift-click** (or ⌘-click) photos in the tray to select several — they're numbered
+  in the order you click. A bar appears: **Add as a diptych / triptych / four across**
+  (one row, in that order), **Each as its own row**, or Clear. Five or more become rows
+  of 3 and 2, never stranding one. **Esc** clears a selection.
+- Click a photo that isn't in the post and its window offers **Add as solo**, **Start a
+  diptych…** or **Start a triptych…** — then just click the partner photo(s) in the tray
+  and the row builds itself.
+
+## Automatic layout rules
+
+**✨ Lay the photos out for me** now reads each photo's capture time (EXIF
+DateTimeOriginal) and lays them out in the order they were taken, **opening on a solo
+photo and closing on a solo photo**. The solo is the earliest/latest *horizontal* among
+the first/last three; a vertical is only used solo if there's no horizontal nearby.
+Photos without a capture time keep their drop order, after the timed ones.
 
 ## Draft the opening from a flyer
 

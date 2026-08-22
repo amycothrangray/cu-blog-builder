@@ -562,6 +562,7 @@ function loadFiles(files) {
       if (!state.featuredPid) state.featuredPid = pid;
       URL.revokeObjectURL(img.src);
       renderTray(); touch();
+      readTakenAt(f).then((ts) => { if (state.photos[pid]) { state.photos[pid].takenAt = ts; touch(); } });
     };
     img.src = URL.createObjectURL(f);
   });
@@ -576,7 +577,7 @@ function loadFiles(files) {
    If the JPEGs carry Bridge/Lightroom star ratings in their XMP, the tiles
    show them and one button pre-picks everything rated 3+. */
 const cull = { items: [], filter: 'all', focus: 0, added: new Set(), folder: '' };
-const CULL_VERSION = 'v7';   // shown in the cull header so support can tell which build is running
+const CULL_VERSION = 'v8';   // shown in the cull header so support can tell which build is running
 
 async function pickFolder() {
   if (window.showDirectoryPicker) {
@@ -787,14 +788,131 @@ function renderTray() {
     const p = state.photos[pid];
     if (!p) return;
     const d = document.createElement('div');
-    d.className = 'thumb' + (used.has(pid) ? ' used' : '');
-    d.innerHTML = `<img src="${p.thumb}" alt="">` +
+    const si = selIndex(pid);
+    d.className = 'thumb' + (used.has(pid) ? ' used' : '') + (si >= 0 ? ' sel' : '');
+    d.innerHTML = `<img src="${p.thumb}" alt="" draggable="false">` +
       (state.featuredPid === pid ? '<span class="star">★</span>' : '') +
       (p.crop ? `<span class="cropped">${p.cropRatio === 1 ? 'square' : 'cropped'}</span>` : '') +
+      (si >= 0 ? `<span class="selnum">${si + 1}</span>` : '') +
       (used.has(pid) ? '<span class="flag">in post</span>' : '');
-    d.onclick = () => openPhotoModal(pid);
+    d.onclick = (e) => {
+      // Shift/⌘/Ctrl-click selects; a plain click while building a diptych or
+      // triptych also selects; otherwise open the photo's details.
+      if (e.shiftKey || e.metaKey || e.ctrlKey || (sel.target && !used.has(pid))) { e.preventDefault(); toggleSel(pid); return; }
+      openPhotoModal(pid);
+    };
     tray.appendChild(d);
   });
+  renderSelBar();
+}
+
+/* ------------------------------------ select several, add them as one row
+   Shift-click (or ⌘-click) photos in the tray to pick them in order, then one
+   button adds them as a single row — solo, diptych, triptych or four across
+   — or as rows of 2–3 when there are more. "Start a diptych…" from a photo's
+   details window does the same with a target size, so plain clicks in the
+   tray fill it and the row builds itself. */
+const sel = { pids: [], target: 0 };
+const ROW_NAMES = { 1: 'solo', 2: 'a diptych', 3: 'a triptych', 4: 'four across' };
+function selIndex(pid) { return sel.pids.indexOf(pid); }
+function toggleSel(pid) {
+  if (usedPids().has(pid)) { $('photoState').textContent = 'That photo is already in the post — remove it from its row first.'; return; }
+  const i = selIndex(pid);
+  if (i >= 0) sel.pids.splice(i, 1); else sel.pids.push(pid);
+  renderTray();
+  if (sel.target && sel.pids.length >= sel.target) commitSel('row');
+}
+function clearSel() { sel.pids = []; sel.target = 0; renderTray(); }
+function renderSelBar() {
+  const bar = $('selBar'); if (!bar) return;
+  const used = usedPids();
+  sel.pids = sel.pids.filter((p) => state.photos[p] && !used.has(p));
+  const n = sel.pids.length;
+  if (!n && !sel.target) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  if (sel.target && n < sel.target) {
+    const need = sel.target - n;
+    $('selText').textContent = `Pick ${need} more photo${need === 1 ? '' : 's'} for ${ROW_NAMES[sel.target]} — just click them in the tray.`;
+  } else {
+    $('selText').textContent = `${n} photo${n === 1 ? '' : 's'} selected, in the order you clicked.`;
+  }
+  const rowBtn = $('selRowBtn');
+  rowBtn.textContent = n <= 4 ? `Add as ${ROW_NAMES[n] || 'a row'}` : `Add as rows (${n} photos)`;
+  rowBtn.disabled = n === 0;
+  $('selEachBtn').hidden = n < 2;
+}
+/* 5+ photos: rows of 3 and 2, never stranding one on its own. */
+function chunkRows(pids) {
+  const out = []; const q = pids.slice();
+  while (q.length) {
+    let n = Math.min(3, q.length);
+    if (q.length - n === 1) n -= 1;
+    out.push(q.splice(0, Math.max(1, n)));
+  }
+  return out;
+}
+function commitSel(mode) {
+  const used = usedPids();
+  const pids = sel.pids.filter((p) => state.photos[p] && !used.has(p));
+  if (!pids.length) { clearSel(); return; }
+  const rows = mode === 'each' ? pids.map((p) => [p]) : pids.length <= 4 ? [pids] : chunkRows(pids);
+  rows.forEach((r) => state.blocks.push({ type: 'row', slots: r }));
+  const what = rows.length === 1 ? (ROW_NAMES[rows[0].length] || 'a row') : `${rows.length} rows`;
+  sel.pids = []; sel.target = 0;
+  renderBlocks(); renderTray(); touch();
+  layoutNote(`Added ${pids.length} photo${pids.length === 1 ? '' : 's'} as ${what}, at the end of the post.`);
+}
+function startRowFrom(pid, target) {
+  if (!pid || usedPids().has(pid)) return;
+  sel.pids = [pid]; sel.target = target;
+  $('photoModal').classList.add('hidden');
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();   // so Esc works right away
+  renderTray();
+  $('stepPhotos').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* ----------------------------------------------------------- capture time
+   EXIF DateTimeOriginal (0x9003), read from the first 128 KB of the file, so
+   the automatic layout can run in the order the photos were taken. Falls
+   back to the file's modified time. */
+async function readTakenAt(file) {
+  try {
+    const buf = new Uint8Array(await file.slice(0, 131072).arrayBuffer());
+    if (buf[0] !== 0xFF || buf[1] !== 0xD8) return file.lastModified || 0;
+    const dv = new DataView(buf.buffer);
+    let i = 2;
+    while (i + 4 < buf.length && buf[i] === 0xFF) {
+      const marker = buf[i + 1], len = (buf[i + 2] << 8) | buf[i + 3];
+      if (marker === 0xDA) break;                                   // image data — no EXIF
+      if (marker === 0xE1 && buf[i + 4] === 0x45 && buf[i + 5] === 0x78 && buf[i + 6] === 0x69 && buf[i + 7] === 0x66) {
+        const t = i + 10;                                           // TIFF header
+        const le = buf[t] === 0x49;
+        const u16 = (o) => dv.getUint16(o, le), u32 = (o) => dv.getUint32(o, le);
+        const findTag = (ifd, tag) => { const n = u16(ifd); for (let k = 0; k < n; k++) { const e = ifd + 2 + k * 12; if (u16(e) === tag) return e; } return -1; };
+        const ifd0 = t + u32(t + 4);
+        let e = -1;
+        const exifPtr = findTag(ifd0, 0x8769);
+        if (exifPtr >= 0) e = findTag(t + u32(exifPtr + 8), 0x9003);   // DateTimeOriginal
+        if (e < 0) e = findTag(ifd0, 0x0132);                            // DateTime
+        if (e >= 0) {
+          const cnt = u32(e + 4);
+          const off = cnt > 4 ? t + u32(e + 8) : e + 8;
+          const str = String.fromCharCode(...buf.subarray(off, off + Math.min(cnt, 19)));
+          const m = str.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+          if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+        }
+        break;
+      }
+      i += 2 + len;
+    }
+  } catch { /* malformed EXIF — fall through */ }
+  return file.lastModified || 0;
+}
+/* Oldest first; photos with no capture time keep their drop order, after. */
+function sortByTaken(pids) {
+  const idx = new Map(state.photoOrder.map((p, i) => [p, i]));
+  const key = (p) => (state.photos[p].takenAt || 0) || (9e15 + idx.get(p));
+  return pids.slice().sort((x, y) => key(x) - key(y));
 }
 
 
@@ -1238,12 +1356,24 @@ function loneVerticalRows() {
 
 function magicLayout() {
   const used = usedPids();
-  const free = state.photoOrder.filter((pid) => !used.has(pid));
+  // Amy's rules: lay out in the order the photos were taken, open on a solo
+  // photo and close on a solo photo. A solo should be a horizontal when one is
+  // among the first/last three; otherwise the vertical stands alone.
+  const free = sortByTaken(state.photoOrder.filter((pid) => !used.has(pid)));
   if (!free.length) return;
-  // Sizes to reach for, in order, purely for visual rhythm.
+  const takeSolo = (fromEnd) => {
+    const win = fromEnd ? free.slice(-3).reverse() : free.slice(0, 3);
+    const pick = win.find((p) => !isVertical(p)) || win[0];
+    free.splice(free.indexOf(pick), 1);
+    return pick;
+  };
+  const opener = takeSolo(false);
+  const closer = free.length ? takeSolo(true) : null;
+  // Sizes to reach for, in order, purely for visual rhythm. Starts at a pair
+  // so the middle doesn't open with a second solo right after the opener.
   const pattern = [1, 2, 3, 2, 1, 3, 2, 2];
   const rows = [];
-  let pi = 0;
+  let pi = 1;
   while (free.length) {
     const wantsVertical = isVertical(free[0]);
     let n = Math.min(pattern[pi % pattern.length], free.length);
@@ -1277,8 +1407,11 @@ function magicLayout() {
     if (prev && prev.slots.filter(Boolean).length < 3) { prev.slots.push(slots[0]); rows.splice(i, 1); }
     else if (next && next.slots.filter(Boolean).length < 3) { next.slots.unshift(slots[0]); rows.splice(i, 1); }
   }
+  state.blocks.push({ type: 'row', slots: [opener] });
   rows.forEach((r) => state.blocks.push(r));
+  if (closer) state.blocks.push({ type: 'row', slots: [closer] });
   renderBlocks(); renderTray(); touch();
+  layoutNote(`Laid out ${1 + rows.reduce((n, r) => n + r.slots.length, 0) + (closer ? 1 : 0)} photos in the order they were taken — opening and closing on a solo.`);
 }
 
 /* -------------------------------------------------- source material → intro
@@ -2140,6 +2273,17 @@ async function init() {
   $('pmAlt').oninput = (e) => { if (modalPid) { state.photos[modalPid].alt = e.target.value; touch(); renderSeoCheck(); } };
   $('pmFilename').oninput = (e) => { if (modalPid) { state.photos[modalPid].filename = slugify(e.target.value); touch(); } };
   $('pmFeatureBtn').onclick = () => { state.featuredPid = modalPid; renderTray(); touch(); };
+  $('selRowBtn').onclick = () => commitSel('row');
+  $('selEachBtn').onclick = () => commitSel('each');
+  $('selCancelBtn').onclick = clearSel;
+  $('pmDipBtn').onclick = () => startRowFrom(modalPid, 2);
+  $('pmTripBtn').onclick = () => startRowFrom(modalPid, 3);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !(sel.pids.length || sel.target)) return;
+    if (document.querySelector('.overlay:not(.hidden)')) return;      // a modal owns Esc
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName)) return;
+    clearSel();
+  });
   $('pmAddBtn').onclick = () => {
     if (!modalPid || usedPids().has(modalPid)) return;
     // First empty slot in an existing row wins; otherwise a new single row at the end.
