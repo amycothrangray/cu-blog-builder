@@ -643,27 +643,37 @@ async function buildCullThumbs() {
       if (done % 10 === 0 || !pending.length) { say(); updateCullButtons(); }
     }
   };
-  await Promise.all([worker(), worker(), worker()]);
+  await Promise.all([worker(), worker()]);
   say(); updateCullButtons();
 }
-async function makeCullThumb(file) {
-  const draw = (src, w, h) => {
-    const sc = Math.min(1, CULL_THUMB / Math.max(w, h));
-    const c = document.createElement('canvas');
-    c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(h * sc));
-    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
-    return c.toDataURL('image/jpeg', 0.72);
-  };
-  if (window.createImageBitmap) {
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
-    const url = draw(bmp, bmp.width, bmp.height); bmp.close(); return url;
-  }
+/* Decode a photo file and scale it to `edge` on its long side. Deliberately the
+   same <img> + canvas path loadFiles() has always used — createImageBitmap on
+   hundreds of full-res camera JPEGs blew Chrome's GPU canvas budget and the
+   tiles came back as bands of other photos. One at a time, small canvas,
+   release the object URL immediately. */
+function decodeScaled(file, edge, quality) {
   return new Promise((res, rej) => {
     const img = new Image();
-    img.onload = () => { const u = draw(img, img.width, img.height); URL.revokeObjectURL(img.src); res(u); };
-    img.onerror = rej; img.src = URL.createObjectURL(file);
+    img.decoding = 'async';
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      try {
+        const sc = Math.min(1, edge / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * sc));
+        c.height = Math.max(1, Math.round(img.naturalHeight * sc));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const out = c.toDataURL('image/jpeg', quality);
+        c.width = c.height = 0;           // give the canvas memory back right away
+        res(out);
+      } catch (e) { rej(e); }
+      finally { URL.revokeObjectURL(url); img.src = ''; }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('decode failed')); };
+    img.src = url;
   });
 }
+function makeCullThumb(file) { return decodeScaled(file, CULL_THUMB, 0.72); }
 /* Bridge / Lightroom write xmp:Rating and xmp:Label into the JPEG's XMP packet,
    which sits in the first few hundred KB. Read just that much. */
 async function readXmpRating(file) {
@@ -735,21 +745,8 @@ function openCullView() {
 }
 async function bigFor(it) {
   if (it.big) return it.big;
-  const draw = (src, w, h) => {
-    const sc = Math.min(1, 1600 / Math.max(w, h));
-    const c = document.createElement('canvas');
-    c.width = Math.round(w * sc); c.height = Math.round(h * sc);
-    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
-    return c.toDataURL('image/jpeg', 0.85);
-  };
-  try {
-    if (window.createImageBitmap) {
-      const bmp = await createImageBitmap(it.file, { imageOrientation: 'from-image' });
-      it.big = draw(bmp, bmp.width, bmp.height); bmp.close();
-    } else {
-      it.big = await new Promise((res) => { const im = new Image(); im.onload = () => { res(draw(im, im.width, im.height)); URL.revokeObjectURL(im.src); }; im.src = URL.createObjectURL(it.file); });
-    }
-  } catch { it.big = it.thumb; }
+  try { it.big = await decodeScaled(it.file, 1600, 0.85); }
+  catch { it.big = it.thumb; }
   return it.big;
 }
 function closeCullView() { $('cullView').classList.add('hidden'); setCullFocus(cull.focus, true); }
