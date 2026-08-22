@@ -576,7 +576,7 @@ function loadFiles(files) {
    If the JPEGs carry Bridge/Lightroom star ratings in their XMP, the tiles
    show them and one button pre-picks everything rated 3+. */
 const cull = { items: [], filter: 'all', focus: 0, added: new Set(), folder: '' };
-const CULL_VERSION = 'v6';   // shown in the cull header so support can tell which build is running
+const CULL_VERSION = 'v7';   // shown in the cull header so support can tell which build is running
 
 async function pickFolder() {
   if (window.showDirectoryPicker) {
