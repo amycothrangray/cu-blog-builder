@@ -30,6 +30,25 @@ publishing is resumable, photos are resized to 1800px in the browser, credit and
 copyright are stamped into each JPEG's XMP, and there's a live 8-point SEO
 scorecard against the focus keyword.
 
+## Pick photos from a folder (culling)
+
+In step 2, **pick from a folder** opens a whole folder — your Dropbox folder on this
+Mac, no Dropbox login needed — as a contact sheet. Click or press **Space** to pick,
+**X** to unpick, arrow keys to move, **Enter** to view large, **Esc** to close. Filter
+to *Picked* / *Not picked*, then **Add N picked photos** sends just the keepers through
+the normal photo pipeline (resize, crop, alt text, rows). Reopen the same folder any
+time: picks are remembered and photos already in the post are greyed out.
+
+If the JPEGs carry Bridge/Lightroom star ratings (XMP `xmp:Rating`), the tiles show
+the stars and a **★ Pick everything rated 3+** button appears.
+
+Chrome and Edge use the native folder picker (subfolders two levels deep are
+included); other browsers fall back to the standard folder chooser. Thumbnails are
+made in the browser at 320px; nothing leaves your computer until you add a photo.
+
+A photo that is in the tray but not in any row now shows a **➕ Put it in the post**
+panel when you click it — it drops into the first empty slot, or becomes its own row.
+
 ## Draft the opening from a flyer
 
 Step 3 has a **source material** box. Drop in the event's flyer, program, press

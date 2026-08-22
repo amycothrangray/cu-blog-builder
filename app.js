@@ -567,6 +567,217 @@ function loadFiles(files) {
   });
 }
 
+/* ------------------------------------------------------------- folder culling
+   Open a whole folder (Dropbox syncs to a local folder, so no Dropbox login is
+   needed) as a contact sheet, pick the keepers, add only those to the post.
+   Chrome/Edge use the directory picker; everywhere else falls back to the
+   <input webkitdirectory> folder chooser. Nothing is uploaded until the
+   picked photos go through the normal loadFiles() path.
+   If the JPEGs carry Bridge/Lightroom star ratings in their XMP, the tiles
+   show them and one button pre-picks everything rated 3+. */
+const cull = { items: [], filter: 'all', focus: 0, added: new Set(), folder: '' };
+const CULL_THUMB = 320;
+
+async function pickFolder() {
+  if (window.showDirectoryPicker) {
+    let dir;
+    try { dir = await window.showDirectoryPicker({ mode: 'read' }); }
+    catch (e) { if (e && e.name === 'AbortError') return; $('folderInput').click(); return; }
+    const files = await collectImages(dir, '', 0);
+    cull.folder = dir.name;
+    startCull(files);
+  } else {
+    $('folderInput').click();
+  }
+}
+async function collectImages(dir, prefix, depth) {
+  const out = [];
+  for await (const [name, h] of dir.entries()) {
+    if (name.startsWith('.') || name.startsWith('._')) continue;
+    if (h.kind === 'file') {
+      if (!/\.(jpe?g|png|webp)$/i.test(name)) continue;
+      out.push({ file: await h.getFile(), path: prefix + name });
+    } else if (h.kind === 'directory' && depth < 2) {
+      out.push(...await collectImages(h, prefix + name + '/', depth + 1));
+    }
+  }
+  return out;
+}
+function startCull(entries) {
+  // entries: [{file, path}] or a FileList from <input webkitdirectory>
+  const list = [...entries].map((e) => e.file ? e : { file: e, path: e.webkitRelativePath || e.name })
+    .filter((e) => /\.(jpe?g|png|webp)$/i.test(e.path) && !/(^|\/)\.|(^|\/)\._/.test(e.path));
+  list.sort((x, y) => x.path.localeCompare(y.path, undefined, { numeric: true }));
+  if (!list.length) { alert('No JPG, PNG or WebP photos in that folder.'); return; }
+  if (!cull.folder) cull.folder = (list[0].path.split('/')[0] || 'folder');
+  // keep picks if the same folder is reopened
+  const prev = new Map(cull.items.map((it) => [it.key, it]));
+  cull.items = list.map((e) => {
+    const key = e.path + ':' + e.file.size;
+    const old = prev.get(key);
+    return old || { key, file: e.file, path: e.path, name: e.path.split('/').pop(),
+      thumb: '', rating: 0, label: '', picked: false, big: null };
+  });
+  cull.filter = 'all'; cull.focus = 0;
+  document.querySelectorAll('.cullfilters [data-cf]').forEach((b) => b.classList.toggle('on', b.dataset.cf === 'all'));
+  $('cullTitle').textContent = `Pick the photos for this post — ${cull.folder}`;
+  $('cullModal').classList.remove('hidden');
+  renderCull();
+  buildCullThumbs();
+}
+async function buildCullThumbs() {
+  const pending = cull.items.filter((it) => !it.thumb);
+  let done = 0;
+  const say = () => { $('cullHint').textContent = pending.length && done < pending.length
+    ? `Reading ${done} of ${pending.length} photos…` : `${cull.items.length} photos. Ratings: ${cull.items.filter((i) => i.rating > 0).length} rated.`; };
+  say();
+  const worker = async () => {
+    while (pending.length) {
+      const it = pending.shift();
+      try {
+        [it.thumb, { rating: it.rating, label: it.label }] = await Promise.all([makeCullThumb(it.file), readXmpRating(it.file)]);
+      } catch { it.thumb = 'data:,'; }
+      done++;
+      const tile = document.querySelector(`.ctile[data-key="${CSS.escape(it.key)}"]`);
+      if (tile) paintTile(tile, it);
+      if (done % 10 === 0 || !pending.length) { say(); updateCullButtons(); }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  say(); updateCullButtons();
+}
+async function makeCullThumb(file) {
+  const draw = (src, w, h) => {
+    const sc = Math.min(1, CULL_THUMB / Math.max(w, h));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(h * sc));
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.72);
+  };
+  if (window.createImageBitmap) {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const url = draw(bmp, bmp.width, bmp.height); bmp.close(); return url;
+  }
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => { const u = draw(img, img.width, img.height); URL.revokeObjectURL(img.src); res(u); };
+    img.onerror = rej; img.src = URL.createObjectURL(file);
+  });
+}
+/* Bridge / Lightroom write xmp:Rating and xmp:Label into the JPEG's XMP packet,
+   which sits in the first few hundred KB. Read just that much. */
+async function readXmpRating(file) {
+  try {
+    const head = await file.slice(0, 262144).text();
+    const r = head.match(/xmp:Rating="(-?\d)"/) || head.match(/<xmp:Rating>(-?\d)<\/xmp:Rating>/);
+    const l = head.match(/xmp:Label="([^"]*)"/) || head.match(/<xmp:Label>([^<]*)<\/xmp:Label>/);
+    return { rating: r ? Number(r[1]) : 0, label: l ? l[1] : '' };
+  } catch { return { rating: 0, label: '' }; }
+}
+function cullVisible() {
+  return cull.items.filter((it) => cull.filter === 'all' ? true : cull.filter === 'picked' ? it.picked : !it.picked);
+}
+function paintTile(tile, it) {
+  tile.className = 'ctile' + (it.picked ? ' picked' : '') + (cull.added.has(it.key) ? ' inpost' : '');
+  tile.innerHTML = (it.thumb ? `<img src="${it.thumb}" alt="" draggable="false">` : '<span class="pend">reading…</span>') +
+    (it.rating > 0 ? `<span class="star">${'★'.repeat(it.rating)}</span>` : '') +
+    `<span class="nm" title="${esc(it.path)}">${esc(it.name)}</span>`;
+}
+function renderCull() {
+  const grid = $('cullGrid');
+  grid.innerHTML = '';
+  const vis = cullVisible();
+  vis.forEach((it, i) => {
+    const tile = document.createElement('div');
+    tile.dataset.key = it.key;
+    paintTile(tile, it);
+    if (i === cull.focus) tile.classList.add('focus');
+    tile.onclick = () => { cull.focus = i; togglePick(it); };
+    tile.ondblclick = (e) => { e.preventDefault(); cull.focus = i; openCullView(); };
+    grid.appendChild(tile);
+  });
+  if (!vis.length) grid.innerHTML = '<p class="hint" style="grid-column:1/-1;text-align:center;padding:40px 0">Nothing here with this filter.</p>';
+  updateCullButtons();
+}
+function setCullFocus(i, scroll) {
+  const vis = cullVisible();
+  if (!vis.length) return;
+  cull.focus = Math.max(0, Math.min(vis.length - 1, i));
+  document.querySelectorAll('.ctile.focus').forEach((t) => t.classList.remove('focus'));
+  const tile = $('cullGrid').children[cull.focus];
+  if (tile && tile.classList) { tile.classList.add('focus'); if (scroll) tile.scrollIntoView({ block: 'nearest' }); }
+}
+function togglePick(it, force) {
+  it.picked = force === undefined ? !it.picked : !!force;
+  const tile = document.querySelector(`.ctile[data-key="${CSS.escape(it.key)}"]`);
+  if (tile) { const wasFocus = tile.classList.contains('focus'); paintTile(tile, it); if (wasFocus) tile.classList.add('focus'); }
+  if (cull.filter !== 'all') renderCull();   // it may have just left this filter
+  updateCullButtons();
+}
+function updateCullButtons() {
+  const picked = cull.items.filter((it) => it.picked && !cull.added.has(it.key)).length;
+  const btn = $('cullAddBtn');
+  btn.disabled = !picked;
+  btn.textContent = `Add ${picked} picked photo${picked === 1 ? '' : 's'}`;
+  const rated = cull.items.some((it) => it.rating >= 3);
+  $('cullStarBtn').hidden = !rated;
+}
+function openCullView() {
+  const vis = cullVisible(); const it = vis[cull.focus];
+  if (!it) return;
+  $('cullView').classList.remove('hidden');
+  $('cullViewName').textContent = `${it.name}${it.rating ? '  ' + '★'.repeat(it.rating) : ''}`;
+  $('cullViewPick').textContent = it.picked ? '✓ Picked' : 'Pick';
+  $('cullViewPick').classList.toggle('on', it.picked);
+  const img = $('cullViewImg');
+  img.src = it.thumb;               // instant, then sharpen
+  bigFor(it).then((u) => { if (cullVisible()[cull.focus] === it) img.src = u; });
+}
+async function bigFor(it) {
+  if (it.big) return it.big;
+  const draw = (src, w, h) => {
+    const sc = Math.min(1, 1600 / Math.max(w, h));
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.85);
+  };
+  try {
+    if (window.createImageBitmap) {
+      const bmp = await createImageBitmap(it.file, { imageOrientation: 'from-image' });
+      it.big = draw(bmp, bmp.width, bmp.height); bmp.close();
+    } else {
+      it.big = await new Promise((res) => { const im = new Image(); im.onload = () => { res(draw(im, im.width, im.height)); URL.revokeObjectURL(im.src); }; im.src = URL.createObjectURL(it.file); });
+    }
+  } catch { it.big = it.thumb; }
+  return it.big;
+}
+function closeCullView() { $('cullView').classList.add('hidden'); setCullFocus(cull.focus, true); }
+function addPickedToPost() {
+  const keep = cull.items.filter((it) => it.picked && !cull.added.has(it.key));
+  if (!keep.length) return;
+  loadFiles(keep.map((it) => it.file));
+  keep.forEach((it) => cull.added.add(it.key));
+  $('cullModal').classList.add('hidden');
+  $('photoState').textContent = `Added ${keep.length} photo${keep.length === 1 ? '' : 's'} from ${cull.folder}. Open the folder again any time to pick more — picks are remembered.`;
+  $('stepPhotos').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function cullKeys(e) {
+  if ($('cullModal').classList.contains('hidden')) return;
+  const viewing = !$('cullView').classList.contains('hidden');
+  const vis = cullVisible(); const it = vis[cull.focus];
+  const cols = (() => { const g = $('cullGrid'); const t = g.children[0]; return t ? Math.max(1, Math.floor(g.clientWidth / (t.offsetWidth + 8))) : 1; })();
+  const k = e.key;
+  if (k === 'Escape') { e.preventDefault(); if (viewing) closeCullView(); else $('cullModal').classList.add('hidden'); return; }
+  if (k === 'ArrowRight') { e.preventDefault(); setCullFocus(cull.focus + 1, true); if (viewing) openCullView(); return; }
+  if (k === 'ArrowLeft')  { e.preventDefault(); setCullFocus(cull.focus - 1, true); if (viewing) openCullView(); return; }
+  if (k === 'ArrowDown' && !viewing) { e.preventDefault(); setCullFocus(cull.focus + cols, true); return; }
+  if (k === 'ArrowUp' && !viewing)   { e.preventDefault(); setCullFocus(cull.focus - cols, true); return; }
+  if ((k === ' ' || k === 'p' || k === 'P') && it) { e.preventDefault(); togglePick(it); if (viewing) openCullView(); return; }
+  if ((k === 'x' || k === 'X') && it) { e.preventDefault(); togglePick(it, false); if (viewing) openCullView(); return; }
+  if ((k === 'Enter' || k === 'f' || k === 'F') && it && !viewing) { e.preventDefault(); openCullView(); return; }
+}
+
 function usedPids() {
   const used = new Set();
   state.blocks.forEach((b) => { if (b.type === 'row') b.slots.forEach((p) => p && used.add(p)); });
@@ -629,6 +840,8 @@ function openPhotoModal(pid) {
   $('pmFilename').value = p.filename;
   $('pmCaption').value = p.caption || '';
   $('pmAltState').textContent = '';
+  // A photo that isn't placed in any row gets an obvious way back in.
+  $('pmPutBack').classList.toggle('hidden', usedPids().has(pid));
   $('photoModal').classList.remove('hidden');
 }
 
@@ -1856,6 +2069,23 @@ async function init() {
 
   const dz = $('dropzone');
   $('browseBtn').onclick = () => $('fileInput').click();
+  $('folderBtn').onclick = pickFolder;
+  $('folderInput').onchange = (e) => { cull.folder = ''; startCull(e.target.files); e.target.value = ''; };
+  document.querySelectorAll('.cullfilters [data-cf]').forEach((b) => b.onclick = () => {
+    cull.filter = b.dataset.cf; cull.focus = 0;
+    document.querySelectorAll('.cullfilters [data-cf]').forEach((x) => x.classList.toggle('on', x === b));
+    renderCull();
+  });
+  $('cullStarBtn').onclick = () => { cull.items.forEach((it) => { if (it.rating >= 3) it.picked = true; }); renderCull(); };
+  $('cullClearBtn').onclick = () => { cull.items.forEach((it) => { it.picked = false; }); renderCull(); };
+  $('cullAddBtn').onclick = addPickedToPost;
+  $('cullCancelBtn').onclick = () => $('cullModal').classList.add('hidden');
+  $('cullViewPick').onclick = () => { const it = cullVisible()[cull.focus]; if (it) { togglePick(it); openCullView(); } };
+  $('cullViewPrev').onclick = () => { setCullFocus(cull.focus - 1, true); openCullView(); };
+  $('cullViewNext').onclick = () => { setCullFocus(cull.focus + 1, true); openCullView(); };
+  $('cullViewClose').onclick = closeCullView;
+  $('cullView').onclick = (e) => { if (e.target === $('cullView')) closeCullView(); };
+  document.addEventListener('keydown', cullKeys);
   $('fileInput').onchange = (e) => { loadFiles(e.target.files); e.target.value = ''; };
   ['dragover', 'dragenter'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
@@ -1915,6 +2145,20 @@ async function init() {
   $('pmAlt').oninput = (e) => { if (modalPid) { state.photos[modalPid].alt = e.target.value; touch(); renderSeoCheck(); } };
   $('pmFilename').oninput = (e) => { if (modalPid) { state.photos[modalPid].filename = slugify(e.target.value); touch(); } };
   $('pmFeatureBtn').onclick = () => { state.featuredPid = modalPid; renderTray(); touch(); };
+  $('pmAddBtn').onclick = () => {
+    if (!modalPid || usedPids().has(modalPid)) return;
+    // First empty slot in an existing row wins; otherwise a new single row at the end.
+    let where = '';
+    for (const b of state.blocks) {
+      if (b.type !== 'row') continue;
+      const i = b.slots.indexOf(null);
+      if (i >= 0) { b.slots[i] = modalPid; where = 'into an empty slot'; break; }
+    }
+    if (!where) { state.blocks.push({ type: 'row', slots: [modalPid] }); where = 'as its own row at the end'; }
+    $('photoModal').classList.add('hidden');
+    renderBlocks(); renderTray(); touch();
+    layoutNote(`Put the photo back in the post ${where}.`);
+  };
   $('pmRemoveBtn').onclick = () => {
     if (!modalPid) return;
     if (!confirm('Remove this photo from the post entirely?')) return;

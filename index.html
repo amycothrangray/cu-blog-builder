@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Mulish:ital,wght@0,300..700;1,300..600&family=Raleway:wght@500..700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
 
@@ -62,9 +62,12 @@
 <section class="step" id="stepPhotos">
   <h2><span class="stepnum">2</span> Photos</h2>
   <div id="dropzone">
-    <p><strong>Drag the photos here</strong> or <button class="btn linklike" id="browseBtn">browse your computer</button></p>
-    <p class="hint">Any size is fine — they're automatically resized and optimized for the blog right here in your browser.</p>
+    <p><strong>Drag the photos here</strong>, <button class="btn linklike" id="browseBtn">browse your computer</button>,
+       or <button class="btn linklike" id="folderBtn">pick from a folder</button></p>
+    <p class="hint">Any size is fine — they're automatically resized and optimized for the blog right here in your browser.
+       <em>Pick from a folder</em> opens a whole Dropbox folder as a contact sheet so you can cull: click or press Space to pick, then add just the keepers.</p>
     <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp" multiple hidden>
+    <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
   </div>
   <p class="hint">Click any photo to edit its details or crop it. <span id="photoState"></span></p>
   <div id="tray" class="tray"></div>
@@ -270,6 +273,43 @@
 </div>
 
 
+<!-- Folder culling: contact sheet of a whole folder, pick the keepers -->
+<div id="cullModal" class="overlay hidden">
+  <div class="card modal cull">
+    <div class="cullbar">
+      <div>
+        <h3 id="cullTitle">Pick the photos for this post</h3>
+        <p class="hint" id="cullHint"></p>
+      </div>
+      <div class="chips cullfilters">
+        <button class="chip on" data-cf="all">All</button>
+        <button class="chip" data-cf="picked">Picked</button>
+        <button class="chip" data-cf="unpicked">Not picked</button>
+        <button class="chip" id="cullStarBtn" hidden>★ Pick everything rated 3+</button>
+        <button class="chip" id="cullClearBtn">Clear picks</button>
+      </div>
+    </div>
+    <div id="cullGrid" class="cullgrid"></div>
+    <div class="modal-actions cullactions">
+      <span class="hint">Click or <kbd>Space</kbd> picks · <kbd>X</kbd> unpicks · <kbd>←</kbd> <kbd>→</kbd> move · <kbd>Enter</kbd> views large · <kbd>Esc</kbd> closes</span>
+      <span>
+        <button class="btn ghost" id="cullCancelBtn">Cancel</button>
+        <button class="btn primary" id="cullAddBtn" disabled>Add 0 picked photos</button>
+      </span>
+    </div>
+  </div>
+</div>
+<div id="cullView" class="overlay cullview hidden">
+  <img id="cullViewImg" alt="">
+  <div class="cullviewbar">
+    <span id="cullViewName"></span>
+    <button class="btn" id="cullViewPick">Pick</button>
+    <button class="btn" id="cullViewPrev">←</button>
+    <button class="btn" id="cullViewNext">→</button>
+    <button class="btn" id="cullViewClose">Close</button>
+  </div>
+</div>
+
 <!-- Draft-intro modal -->
 <div id="introModal" class="overlay hidden">
   <div class="card modal">
@@ -316,6 +356,11 @@
     </label>
     <p class="hint">Every published photo is automatically stamped with your credit,
       copyright and keywords inside the file itself.</p>
+    <div id="pmPutBack" class="putback hidden">
+      <div><strong>This photo isn't in the post.</strong>
+        <span class="hint">It'll go into the first empty slot if a row has one, otherwise in as its own row at the end.</span></div>
+      <button class="btn primary" id="pmAddBtn">➕ Put it in the post</button>
+    </div>
     <div class="modal-actions">
       <button class="btn primary" id="pmCropBtn">Crop this photo…</button>
       <button class="btn" id="pmFeatureBtn">Use as featured image</button>
@@ -344,6 +389,6 @@
   </div>
 </div>
 
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
