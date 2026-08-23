@@ -307,3 +307,10 @@ h3.sub { margin: 26px 0 4px; font-size: 1.15rem; }
 .tray .thumb .selnum { position: absolute; bottom: 4px; left: 4px; width: 22px; height: 22px; border-radius: 50%; background: var(--blue); color: #fff; font-size: .75rem; font-weight: 600; display: flex; align-items: center; justify-content: center; z-index: 2; }
 .selbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; padding: 10px 14px; border-radius: 10px; background: var(--sky); }
 .selbar-actions, .putback-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Culling: 100% inspection view */
+.cullview.zoomed { cursor: grab; }
+.cullview.zoomed #cullViewImg { cursor: grab; will-change: transform; }
+.cullview.zoomed #cullViewImg:active { cursor: grabbing; }
+#cullViewImg { transition: transform .12s ease-out; }
+.zoomhint { color: #cfc7c0; font-size: .8rem; margin-left: 10px; }

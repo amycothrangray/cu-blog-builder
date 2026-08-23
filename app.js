@@ -577,7 +577,7 @@ function loadFiles(files) {
    If the JPEGs carry Bridge/Lightroom star ratings in their XMP, the tiles
    show them and one button pre-picks everything rated 3+. */
 const cull = { items: [], filter: 'all', focus: 0, added: new Set(), folder: '' };
-const CULL_VERSION = 'v8';   // shown in the cull header so support can tell which build is running
+const CULL_VERSION = 'v9';   // shown in the cull header so support can tell which build is running
 
 async function pickFolder() {
   if (window.showDirectoryPicker) {
@@ -737,6 +737,72 @@ function updateCullButtons() {
   const rated = cull.items.some((it) => it.rating >= 3);
   $('cullStarBtn').hidden = !rated;
 }
+
+/* ---- 100% inspection in the big view -------------------------------------
+   The tiles are small; checking whether an eye is sharp needs real pixels. */
+let cullZoomed = false;
+let cullPan = { x: 0.5, y: 0.5 };     // where in the photo we're looking (0-1)
+
+function setCullZoom(on, origin) {
+  cullZoomed = !!on;
+  const img = $('cullViewImg');
+  const wrap = $('cullView');
+  if (origin) cullPan = origin;
+  wrap.classList.toggle('zoomed', cullZoomed);
+  if (!cullZoomed) {
+    img.style.transform = '';
+    img.style.transformOrigin = '';
+    $('cullZoomHint').textContent = 'Space = zoom to 100%';
+    return;
+  }
+  applyCullPan();
+  const nat = img.naturalWidth ? `${img.naturalWidth} × ${img.naturalHeight}` : '';
+  $('cullZoomHint').textContent = `100%${nat ? ' · ' + nat : ''} · drag to look around · Space to zoom out`;
+}
+
+function applyCullPan() {
+  const img = $('cullViewImg');
+  if (!cullZoomed || !img.naturalWidth) return;
+  // Scale so one image pixel maps to one screen pixel.
+  const shown = img.getBoundingClientRect();
+  const fitW = shown.width || 1;
+  const scale = Math.max(1, img.naturalWidth / fitW);
+  img.style.transformOrigin = `${(cullPan.x * 100).toFixed(2)}% ${(cullPan.y * 100).toFixed(2)}%`;
+  img.style.transform = `scale(${scale.toFixed(3)})`;
+}
+
+function wireCullZoom() {
+  const img = $('cullViewImg');
+  // Click the photo to zoom in at that spot; click again to zoom out.
+  img.addEventListener('click', (e) => {
+    const r = img.getBoundingClientRect();
+    if (cullZoomed) { setCullZoom(false); return; }
+    setCullZoom(true, { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
+  });
+  // Drag to look around while zoomed.
+  img.addEventListener('pointerdown', (e) => {
+    if (!cullZoomed) return;
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const from = { ...cullPan };
+    const r = img.getBoundingClientRect();
+    const move = (ev) => {
+      cullPan = {
+        x: Math.min(Math.max(from.x - (ev.clientX - startX) / r.width, 0), 1),
+        y: Math.min(Math.max(from.y - (ev.clientY - startY) / r.height, 0), 1),
+      };
+      applyCullPan();
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+  img.addEventListener('load', () => { if (cullZoomed) applyCullPan(); });
+}
+
 function openCullView() {
   const vis = cullVisible(); const it = vis[cull.focus];
   if (!it) return;
@@ -745,8 +811,9 @@ function openCullView() {
   $('cullViewPick').textContent = it.picked ? '✓ Picked' : 'Pick';
   $('cullViewPick').classList.toggle('on', it.picked);
   $('cullViewImg').src = urlFor(it);
+  setCullZoom(false);
 }
-function closeCullView() { $('cullView').classList.add('hidden'); setCullFocus(cull.focus, true); }
+function closeCullView() { setCullZoom(false); $('cullView').classList.add('hidden'); setCullFocus(cull.focus, true); }
 function addPickedToPost() {
   const keep = cull.items.filter((it) => it.picked && !cull.added.has(it.key) && !it.unreadable);
   const skipped = cull.items.filter((it) => it.picked && !cull.added.has(it.key) && it.unreadable).length;
@@ -769,7 +836,15 @@ function cullKeys(e) {
   if (k === 'ArrowLeft')  { e.preventDefault(); setCullFocus(cull.focus - 1, true); if (viewing) openCullView(); return; }
   if (k === 'ArrowDown' && !viewing) { e.preventDefault(); setCullFocus(cull.focus + cols, true); return; }
   if (k === 'ArrowUp' && !viewing)   { e.preventDefault(); setCullFocus(cull.focus - cols, true); return; }
-  if ((k === ' ' || k === 'p' || k === 'P') && it) { e.preventDefault(); togglePick(it); if (viewing) openCullView(); return; }
+  if ((k === 'p' || k === 'P') && it) { e.preventDefault(); togglePick(it); if (viewing) openCullView(); return; }
+  // Space checks focus the way Lightroom does: jump to the big view and go
+  // straight to 100%, then toggle back out. Picking stays on P / X.
+  if (k === ' ' && it) {
+    e.preventDefault();
+    if (!viewing) { openCullView(); setCullZoom(true); }
+    else setCullZoom(!cullZoomed);
+    return;
+  }
   if ((k === 'x' || k === 'X') && it) { e.preventDefault(); togglePick(it, false); if (viewing) openCullView(); return; }
   if ((k === 'Enter' || k === 'f' || k === 'F') && it && !viewing) { e.preventDefault(); openCullView(); return; }
 }
@@ -2214,6 +2289,7 @@ async function init() {
   $('cullViewClose').onclick = closeCullView;
   $('cullView').onclick = (e) => { if (e.target === $('cullView')) closeCullView(); };
   document.addEventListener('keydown', cullKeys);
+  wireCullZoom();
   $('fileInput').onchange = (e) => { loadFiles(e.target.files); e.target.value = ''; };
   ['dragover', 'dragenter'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));

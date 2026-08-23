@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Mulish:ital,wght@0,300..700;1,300..600&family=Raleway:wght@500..700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 
@@ -65,7 +65,7 @@
     <p><strong>Drag the photos here</strong>, <button class="btn linklike" id="browseBtn">browse your computer</button>,
        or <button class="btn linklike" id="folderBtn">pick from a folder</button></p>
     <p class="hint">Any size is fine — they're automatically resized and optimized for the blog right here in your browser.
-       <em>Pick from a folder</em> opens a whole Dropbox folder as a contact sheet so you can cull: click or press Space to pick, then add just the keepers.</p>
+       <em>Pick from a folder</em> opens a whole Dropbox folder as a contact sheet so you can cull: click or press P to pick, then add just the keepers.</p>
     <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp" multiple hidden>
     <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
   </div>
@@ -299,7 +299,7 @@
     </div>
     <div id="cullGrid" class="cullgrid"></div>
     <div class="modal-actions cullactions">
-      <span class="hint">Click or <kbd>Space</kbd> picks · <kbd>X</kbd> unpicks · <kbd>←</kbd> <kbd>→</kbd> move · <kbd>Enter</kbd> views large · <kbd>Esc</kbd> closes</span>
+      <span class="hint">Click or <kbd>P</kbd> picks · <kbd>X</kbd> unpicks · <kbd>Space</kbd> zooms to 100% · <kbd>←</kbd> <kbd>→</kbd> move · <kbd>Enter</kbd> views large · <kbd>Esc</kbd> closes</span>
       <span>
         <button class="btn ghost" id="cullCancelBtn">Cancel</button>
         <button class="btn primary" id="cullAddBtn" disabled>Add 0 picked photos</button>
@@ -311,6 +311,7 @@
   <img id="cullViewImg" alt="">
   <div class="cullviewbar">
     <span id="cullViewName"></span>
+    <span id="cullZoomHint" class="zoomhint">Space = zoom to 100%</span>
     <button class="btn" id="cullViewPick">Pick</button>
     <button class="btn" id="cullViewPrev">←</button>
     <button class="btn" id="cullViewNext">→</button>
@@ -401,6 +402,6 @@
   </div>
 </div>
 
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
