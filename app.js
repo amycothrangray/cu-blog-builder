@@ -1516,7 +1516,7 @@ function renderSourceDocs() {
     el.querySelector('button').onclick = () => { sourceDocs.splice(i, 1); renderSourceDocs(); };
     box.appendChild(el);
   });
-  $('introBtn').disabled = !sourceDocs.length;
+  $('introBtn').disabled = !sourceDocs.length && !($('srcNotes') && $('srcNotes').value.trim());
   const mb = (srcTotalBytes() / 1048576).toFixed(1);
   $('srcState').textContent = sourceDocs.length
     ? `${sourceDocs.length} document${sourceDocs.length === 1 ? '' : 's'} ready (${mb} MB).`
@@ -1560,16 +1560,20 @@ function addSourceFiles(files) {
 }
 let lastIntro = null;
 async function draftIntro() {
-  if (!sourceDocs.length) return;
+  const notes = ($('srcNotes').value || '').trim();
+  if (!sourceDocs.length && !notes) return;
   if (srcTotalBytes() > SRC_MAX_TOTAL) { alert('Those documents add up to more than 20 MB — remove one or two and try again.'); return; }
   const btn = $('introBtn');
   btn.disabled = true;
-  $('srcState').textContent = 'Reading the documents… (about 20–40 seconds)';
+  $('srcState').textContent = sourceDocs.length
+    ? 'Reading the documents… (about 20–40 seconds)'
+    : 'Working from your notes… (about 15–30 seconds)';
   try {
     const r = await api(API + '/intro', {
       method: 'POST',
       body: JSON.stringify({
         docs: sourceDocs.map((d) => ({ name: d.name, mediaType: d.mediaType, dataBase64: d.dataBase64 })),
+        notes,
         title: state.title, location: state.location, text: postText(),
         keywords: getKeywords(),
       }),
@@ -1587,7 +1591,7 @@ async function draftIntro() {
     $('srcState').textContent = 'Drafted. Add it from the window, or close and try again with better photos of the flyer.';
     touch();
   } catch (e) {
-    $('srcState').textContent = 'Couldn\'t draft it (' + e.message + '). Try a clearer photo or a PDF.';
+    $('srcState').textContent = 'Couldn\'t draft it (' + e.message + '). ' + (sourceDocs.length ? 'Try a clearer photo or a PDF.' : 'Try adding a little more detail.');
   }
   btn.disabled = false;
 }
@@ -2309,6 +2313,7 @@ async function init() {
   ['dragover', 'dragenter'].forEach((ev) => sd.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); sd.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach((ev) => sd.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); sd.classList.remove('drag'); }));
   sd.addEventListener('drop', (e) => addSourceFiles(e.dataTransfer.files));
+  $('srcNotes').oninput = renderSourceDocs;   // keep the draft button in step with typed notes
   $('introBtn').onclick = draftIntro;
   $('introUseBtn').onclick = useIntro;
   $('altBtn').onclick = async () => {

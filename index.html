@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Mulish:ital,wght@0,300..700;1,300..600&family=Raleway:wght@500..700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 
@@ -88,8 +88,8 @@
   <div class="srcbox">
     <div class="srchead">
       <div>
-        <strong>Got a flyer, program or press release?</strong>
-        <span class="hint">Drop it here (PDF or photos of it) and Claude drafts the opening paragraph — the what, when, where, who and why — from what's actually on it.</span>
+        <strong>Got a flyer, program, press release — or just some notes?</strong>
+        <span class="hint">Drop a PDF or photos of it, <em>or paste whatever you've got</em> into the box below, and Claude drafts the opening paragraph — the what, when, where, who and why — from what's actually there.</span>
       </div>
       <button class="btn primary" id="introBtn" disabled>✍️ Draft the opening from it</button>
     </div>
@@ -99,6 +99,10 @@
       <input type="file" id="srcInput" accept="application/pdf,image/jpeg,image/png,image/webp" multiple hidden>
     </div>
     <div id="srcList" class="srclist"></div>
+    <label for="srcNotes" class="srcnoteslabel">Or paste the raw details
+      <span class="hint">— an email, a text from a teacher, rough notes, a schedule. Anything. It doesn't need to be tidy.</span>
+    </label>
+    <textarea id="srcNotes" rows="5" placeholder="Paste anything here — e.g. &quot;Fall concert Thurs 11/13 7pm in the HS gym, 4th–6th grade choir, about 120 kids, Mrs. Alvarez directing, theme was Songs of Hope, packed house, they did a surprise encore&quot;"></textarea>
     <p class="hint" id="srcState"></p>
   </div>
 
@@ -402,6 +406,6 @@
   </div>
 </div>
 
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
