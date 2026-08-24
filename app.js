@@ -1397,8 +1397,25 @@ function openPicker(block, slotIndex) {
 }
 
 /* words + magic layout */
+/* Work out where the paragraphs are. Blank lines between them is the tidy
+   case; plenty of pasted copy only has single line breaks, and that used to
+   collapse into one enormous block. Hard-wrapped prose (lines that stop
+   mid-sentence) is rejoined rather than shattered into fragments. */
+function splitParagraphs(raw) {
+  const byBlank = String(raw || '').split(/\n\s*\n/).map((t) => t.trim()).filter(Boolean);
+  const flatten = (t) => t.replace(/\s*\n\s*/g, ' ');
+  if (byBlank.length > 1) return byBlank.map(flatten);
+
+  const lines = String(raw || '').split(/\n+/).map((t) => t.trim()).filter(Boolean);
+  if (lines.length < 2) return byBlank.map(flatten);
+  // If most lines don't finish a sentence, they're wrapped, not separate paragraphs.
+  const finished = lines.filter((l) => /[.!?"'\u2019\u201d)]$/.test(l)).length;
+  if (finished / lines.length < 0.6) return byBlank.map(flatten);
+  return lines;
+}
+
 function addWords(raw) {
-  const paras = raw.split(/\n\s*\n/).map((s) => s.trim().replace(/\s*\n\s*/g, ' ')).filter(Boolean);
+  const paras = splitParagraphs(raw);
   if (!paras.length) return;
   const rowIdxs = state.blocks.map((b, i) => (b.type === 'row' ? i : -1)).filter((i) => i >= 0);
   if (!rowIdxs.length) {
