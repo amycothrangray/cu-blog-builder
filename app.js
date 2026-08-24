@@ -891,7 +891,10 @@ const sel = { pids: [], target: 0 };
 const ROW_NAMES = { 1: 'solo', 2: 'a diptych', 3: 'a triptych', 4: 'four across' };
 function selIndex(pid) { return sel.pids.indexOf(pid); }
 function toggleSel(pid) {
-  if (usedPids().has(pid)) { $('photoState').textContent = 'That photo is already in the post — remove it from its row first.'; return; }
+  if (usedPids().has(pid)) {
+    $('photoState').textContent = 'That one is already in the post. To put another photo beside it, hover its row down in step 3 and click ＋.';
+    return;
+  }
   const i = selIndex(pid);
   if (i >= 0) sel.pids.splice(i, 1); else sel.pids.push(pid);
   renderTray();
@@ -1052,8 +1055,10 @@ function renderBlocks() {
   state.blocks.forEach((b, i) => {
     const d = document.createElement('div');
     d.className = 'block';
+    const rowFull = b.type === 'row' && b.slots.length >= 4;
     const rowTool = b.type === 'row'
-      ? `<button title="Mix it — shuffle the photos in this row" data-act="mix">⇄</button>
+      ? `<button title="${rowFull ? 'This row already holds four' : 'Add another photo to this row'}" data-act="add"${rowFull ? ' disabled' : ''}>＋</button>
+         <button title="Mix it — shuffle the photos in this row" data-act="mix">⇄</button>
          <button title="${rowIsSquare(b) ? 'Back to original shapes' : 'Make this row square'}" data-act="sq">${rowIsSquare(b) ? '▢' : '▣'}</button>`
       : '';
     const tools = `<div class="tools">
@@ -1114,6 +1119,14 @@ function renderBlocks() {
     d.querySelectorAll('.tools button').forEach((btn) => {
       btn.onclick = () => {
         const act = btn.dataset.act;
+        if (act === 'add') {
+          if (b.slots.length >= 4) { layoutNote('A row holds at most four photos.'); return; }
+          b.slots.push(null);
+          renderBlocks();
+          openPicker(b, b.slots.length - 1);
+          touch();
+          return;
+        }
         if (act === 'mix') { mixRow(b); return; }
         if (act === 'sq') { toggleRowSquares(b, btn); return; }
         if (act === 'del') state.blocks.splice(i, 1);
@@ -1362,6 +1375,12 @@ function openPicker(block, slotIndex) {
       + (used.has(pid) ? '<span class="flag">in post</span>'
         : (soloRow && vertical ? '<span class="flag">becomes a pair</span>' : ''));
     d.onclick = () => {
+      // Already in the post? Take it out of its old spot rather than showing
+      // the same photo twice.
+      state.blocks.forEach((blk) => {
+        if (blk.type !== 'row') return;
+        blk.slots = blk.slots.map((q) => (q === pid ? null : q));
+      });
       pickTarget.block.slots[pickTarget.slotIndex] = pid;
       // A vertical is never left standing alone — grow the row into a diptych.
       if (soloRow && vertical) {
