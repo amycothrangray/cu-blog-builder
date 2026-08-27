@@ -1755,15 +1755,37 @@ function linkRank(title) {
   if (READERLY.test(t)) return 0;
   return 1;
 }
+let linkSearchTimer = null;
+let linkSearchHits = null;      // results from the site itself, when searching
+
+/* The cached list only holds recent posts, and the site has hundreds. Anything
+   typed here also asks WordPress directly so older posts can be found. */
+function searchSiteForLinks(q) {
+  clearTimeout(linkSearchTimer);
+  if (q.length < 2) { linkSearchHits = null; renderLinkResults(); return; }
+  linkSearchTimer = setTimeout(async () => {
+    try {
+      const r = await api(API + '/search?q=' + encodeURIComponent(q));
+      linkSearchHits = r.results || [];
+    } catch {
+      linkSearchHits = null;    // fall back to the cached list
+    }
+    renderLinkResults();
+  }, 350);
+}
+
 function renderLinkResults() {
   const q = $('linkSearch').value.trim().toLowerCase();
   const box = $('linkResults');
   box.innerHTML = '';
   const all = [...siteData.pages, ...siteData.posts];
+  const local = q ? all.filter((p) => decode(p.title || '').toLowerCase().includes(q)) : null;
+  // Merge what the site returned with what we already had, no repeats.
+  const seen = new Set();
   const hits = (q
-    ? all.filter((p) => decode(p.title || '').toLowerCase().includes(q))
+    ? [...local, ...(linkSearchHits || [])].filter((p) => (seen.has(p.url) ? false : seen.add(p.url)))
     : [...all].sort((a, b) => linkRank(a.title) - linkRank(b.title))
-  ).slice(0, 12);
+  ).slice(0, 14);
   hits.forEach((p) => {
     const d = document.createElement('div');
     d.className = 'linkitem';
@@ -2360,7 +2382,7 @@ async function init() {
       : 'Every photo already has alt text.';
     $('altBtn').disabled = false;
   };
-  $('linkSearch').oninput = renderLinkResults;
+  $('linkSearch').oninput = () => { renderLinkResults(); searchSiteForLinks($('linkSearch').value.trim()); };
   $('extAddBtn').onclick = () => {
     const t = $('extTitle').value.trim(); let u = $('extUrl').value.trim();
     if (!t || !u) return;
