@@ -1755,6 +1755,18 @@ function linkRank(title) {
   if (READERLY.test(t)) return 0;
   return 1;
 }
+/* Pages the writer never wants offered. The backend already drops Cognito
+   Forms pages and obvious junk; this covers the staff-only stragglers. */
+function hiddenLinks() {
+  try { return new Set(JSON.parse(localStorage.getItem('cuHiddenLinks') || '[]')); }
+  catch { return new Set(); }
+}
+function hideLink(url) {
+  const set = hiddenLinks();
+  set.add(url);
+  localStorage.setItem('cuHiddenLinks', JSON.stringify([...set]));
+}
+
 let linkSearchTimer = null;
 let linkSearchHits = null;      // results from the site itself, when searching
 
@@ -1778,19 +1790,28 @@ function renderLinkResults() {
   const q = $('linkSearch').value.trim().toLowerCase();
   const box = $('linkResults');
   box.innerHTML = '';
-  const all = [...siteData.pages, ...siteData.posts];
+  const hidden = hiddenLinks();
+  const all = [...siteData.pages, ...siteData.posts].filter((p) => !hidden.has(p.url));
   const local = q ? all.filter((p) => decode(p.title || '').toLowerCase().includes(q)) : null;
   // Merge what the site returned with what we already had, no repeats.
   const seen = new Set();
   const hits = (q
-    ? [...local, ...(linkSearchHits || [])].filter((p) => (seen.has(p.url) ? false : seen.add(p.url)))
+    ? [...local, ...(linkSearchHits || []).filter((p) => !hidden.has(p.url))]
+        .filter((p) => (seen.has(p.url) ? false : seen.add(p.url)))
     : [...all].sort((a, b) => linkRank(a.title) - linkRank(b.title))
   ).slice(0, 14);
   hits.forEach((p) => {
     const d = document.createElement('div');
     d.className = 'linkitem';
-    d.innerHTML = `<span class="t">${esc(decode(p.title))}</span><button title="Add">＋</button>`;
-    d.querySelector('button').onclick = () => {
+    d.innerHTML = `<span class="t">${esc(decode(p.title))}</span>` +
+      `<button class="hidelink" title="Never suggest this page again">✕</button>` +
+      `<button title="Add">＋</button>`;
+    d.querySelector('.hidelink').onclick = (e) => {
+      e.stopPropagation();
+      hideLink(p.url);
+      renderLinkResults();
+    };
+    d.querySelectorAll('button')[1].onclick = () => {
       if (!state.links.internal.some((l) => l.url === p.url)) {
         state.links.internal.push({ title: decode(p.title), url: p.url });
         renderChosenLinks(); touch();
