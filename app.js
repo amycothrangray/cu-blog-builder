@@ -114,8 +114,94 @@ function idb(mode, fn) {
 }
 
 let saveTimer = null;
+
+/* ------------------------------------------------------------------ undo
+   Every layout change (rows, order, links) is snapshotted so ⌘Z / the ↶
+   button can walk back through the last 40 of them. */
+const undoStack = [];
+let lastLayoutJson = null;
+const layoutJson = () => JSON.stringify({ b: state.blocks, l: state.links, i: state.inlineLinks });
+function resetUndo() { undoStack.length = 0; lastLayoutJson = layoutJson(); renderUndoBtn(); }
+function recordUndo() {
+  const now = layoutJson();
+  if (lastLayoutJson !== null && now !== lastLayoutJson) {
+    undoStack.push(lastLayoutJson);
+    if (undoStack.length > 40) undoStack.shift();
+  }
+  lastLayoutJson = now;
+  renderUndoBtn();
+}
+function undoLayout() {
+  const prev = undoStack.pop();
+  if (!prev) return;
+  const snap = JSON.parse(prev);
+  state.blocks = snap.b; state.links = snap.l; state.inlineLinks = snap.i;
+  lastLayoutJson = prev;
+  renderBlocks(); renderTray(); renderChosenLinks(); renderInlineChosen();
+  renderUndoBtn(); renderProgress();
+  layoutNote('Undone.');
+  // Save without re-recording this as a new step.
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    await idb('readwrite', (st) => st.put(JSON.parse(JSON.stringify(state))));
+    $('saveState').textContent = 'saved';
+  }, 300);
+}
+function renderUndoBtn() {
+  const b = $('undoBtn'); if (!b) return;
+  b.disabled = !undoStack.length;
+  b.title = undoStack.length ? `Undo the last change (${undoStack.length} available) — ⌘Z` : 'Nothing to undo yet';
+}
+
+/* The strip at the top: where you are, what's done, what's still missing. */
+function progressFacts() {
+  const used = usedPids();
+  const placed = state.photoOrder.filter((p) => used.has(p));
+  const unused = state.photoOrder.length - placed.length;
+  const words = state.blocks.filter((b) => b.type === 'text' && b.text.trim()).length;
+  const noAlt = placed.filter((p) => !(state.photos[p].alt || '').trim()).length;
+  return {
+    title: !!state.title.trim(),
+    photos: state.photoOrder.length,
+    placed: placed.length, unused,
+    rows: state.blocks.filter((b) => b.type === 'row' && b.slots.some(Boolean)).length,
+    words,
+    meta: !!(state.metaDesc || '').trim(),
+    keyword: !!(state.focusKeyword || '').trim(),
+    noAlt,
+    lonely: loneVerticalRows().length,
+    cats: state.categories.length,
+    published: !!state.publishedUrl,
+  };
+}
+function renderProgress() {
+  const el = $('progress'); if (!el) return;
+  const f = progressFacts();
+  const set = (step, status, text) => {
+    const li = el.querySelector(`[data-step="${step}"]`); if (!li) return;
+    li.className = 'pstep ' + status;
+    li.querySelector('.pnote').textContent = text;
+  };
+  const n = (c, w) => `${c} ${w}${c === 1 ? '' : 's'}`;
+  set('stepDetails', f.title ? 'done' : 'todo', f.title ? state.title.slice(0, 34) : 'needs a title');
+  set('stepPhotos', f.photos ? 'done' : 'todo', f.photos ? n(f.photos, 'photo') : 'add photos');
+  set('stepLayout',
+    !f.rows ? 'todo' : (f.unused || f.lonely || !f.words ? 'warn' : 'done'),
+    !f.rows ? 'lay out the photos'
+      : f.lonely ? `${f.lonely} vertical alone`
+      : f.unused ? `${n(f.unused, 'photo')} not in the post`
+      : !f.words ? 'photos placed · no words yet'
+      : `${n(f.placed, 'photo')} · ${n(f.words, 'paragraph')}`);
+  set('stepSeo',
+    (f.meta && f.keyword && !f.noAlt) ? 'done' : (f.meta || f.keyword ? 'warn' : 'todo'),
+    !f.meta ? 'no description yet' : f.noAlt ? `${f.noAlt} missing alt text` : !f.keyword ? 'no keyword' : 'ready');
+  set('stepPublish', f.published ? 'done' : 'todo', f.published ? 'published' : 'check & publish');
+}
+
 function touch() {
   state.updatedAt = Date.now();
+  recordUndo();
+  renderProgress();
   $('saveState').textContent = 'saving…';
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
@@ -865,6 +951,9 @@ function renderTray() {
     const d = document.createElement('div');
     const si = selIndex(pid);
     d.className = 'thumb' + (used.has(pid) ? ' used' : '') + (si >= 0 ? ' sel' : '');
+    d.draggable = true;
+    d.addEventListener('dragstart', (e) => startPhotoDrag(e, pid));
+    d.addEventListener('dragend', endPhotoDrag);
     d.innerHTML = `<img src="${p.thumb}" alt="" draggable="false">` +
       (state.featuredPid === pid ? '<span class="star">★</span>' : '') +
       (p.crop ? `<span class="cropped">${p.cropRatio === 1 ? 'square' : 'cropped'}</span>` : '') +
@@ -1050,7 +1139,17 @@ function renderBlocks() {
   const box = $('blocks');
   box.innerHTML = '';
   if (!state.blocks.length) {
-    box.innerHTML = '<p class="hint">Nothing here yet — add a photo row or paste Amy\'s words to begin.</p>';
+    const havePhotos = state.photoOrder.length > 0;
+    box.innerHTML = `<div class="empty-layout">
+      <p><strong>${havePhotos ? 'Your photos are in — now lay them out.' : 'Nothing here yet.'}</strong></p>
+      <p class="hint">${havePhotos
+        ? 'One press arranges them in rows — solos, pairs and triptychs, in the order they were taken. Then drag any photo to move it.'
+        : 'Add photos in step 2 first; then one press lays them all out for you.'}</p>
+      <button class="btn primary big" id="${havePhotos ? 'emptyLayoutBtn' : 'emptyPhotosBtn'}">${havePhotos ? '✨ Lay the photos out for me' : '↑ Add photos'}</button>
+      <p class="hint">${havePhotos ? 'Or drag a photo from the tray straight down here.' : ''}</p>
+    </div>`;
+    const eb = $('emptyLayoutBtn'); if (eb) eb.onclick = magicLayout;
+    const pb = $('emptyPhotosBtn'); if (pb) pb.onclick = () => $('stepPhotos').scrollIntoView({ behavior: 'smooth' });
   }
   state.blocks.forEach((b, i) => {
     const d = document.createElement('div');
@@ -1105,6 +1204,7 @@ function renderBlocks() {
           slot.textContent = '+ photo';
           slot.onclick = () => openPicker(b, si);
         }
+        wireSlot(slot, b, si, pid);
         row.appendChild(slot);
       });
       d.innerHTML = tools;
@@ -1197,9 +1297,110 @@ function moveBlock(from, to) {
   renderBlocks(); touch();
 }
 
+/* ------------------------------------------------- drag the photos too
+   A photo can be picked up from the tray or from any row and dropped:
+   onto another photo (joins that row, before or after it), onto an empty
+   slot (fills it), onto a row or text block (its own new row above/below),
+   or under the last block (a new row at the end). A photo is only ever in
+   one place, so moving never duplicates. */
+let dragPid = null;
+
+function takeOutOfRows(pid) {
+  state.blocks.forEach((blk) => {
+    if (blk.type === 'row') blk.slots = blk.slots.map((q) => (q === pid ? null : q));
+  });
+  // A row emptied by the move disappears; a row that still has photos keeps
+  // any gap closed up so nothing is left dangling.
+  state.blocks = state.blocks.filter((blk) => blk.type !== 'row' || blk.slots.some(Boolean));
+  state.blocks.forEach((blk) => { if (blk.type === 'row') blk.slots = blk.slots.filter(Boolean); });
+}
+
+function afterPhotoLanded(block) {
+  // Amy's rule still applies to hand-made rows: a vertical never sits alone.
+  const filled = block.slots.filter(Boolean);
+  if (filled.length === 1 && isVertical(filled[0]) && !mustStandAlone(filled[0])) {
+    block.slots.push(null);
+    layoutNote('Verticals are never shown alone — drop a second photo into that row.');
+  }
+}
+
+function startPhotoDrag(e, pid) {
+  e.stopPropagation();                 // don't let the whole row start dragging too
+  dragPid = pid;
+  dragFrom = null;
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', 'photo:' + pid); } catch { /* Safari */ }
+  document.body.classList.add('dragging-photo');
+}
+function endPhotoDrag() {
+  dragPid = null;
+  document.body.classList.remove('dragging-photo');
+  clearDragMarks();
+}
+
+/* A photo slot: draggable (if filled) and a drop target either way. */
+function wireSlot(slot, block, index, pid) {
+  if (pid) {
+    slot.draggable = true;
+    slot.addEventListener('dragstart', (e) => startPhotoDrag(e, pid));
+    slot.addEventListener('dragend', endPhotoDrag);
+  }
+  slot.addEventListener('dragover', (e) => {
+    if (!dragPid || dragPid === pid) return;
+    e.preventDefault(); e.stopPropagation();
+    const r = slot.getBoundingClientRect();
+    const after = (e.clientX - r.left) > r.width / 2;
+    slot.classList.toggle('drop-fill', !pid);
+    slot.classList.toggle('drop-left', !!pid && !after);
+    slot.classList.toggle('drop-right', !!pid && after);
+  });
+  slot.addEventListener('dragleave', () => slot.classList.remove('drop-left', 'drop-right', 'drop-fill'));
+  slot.addEventListener('drop', (e) => {
+    if (!dragPid || dragPid === pid) return;
+    e.preventDefault(); e.stopPropagation();
+    const moving = dragPid;
+    const r = slot.getBoundingClientRect();
+    const after = (e.clientX - r.left) > r.width / 2;
+    const filledNow = block.slots.filter(Boolean).length;
+    const alreadyHere = block.slots.includes(moving);
+    if (!pid) {
+      takeOutOfRows(moving);
+      block.slots[index] = moving;
+      if (!state.blocks.includes(block)) state.blocks.push(block);
+    } else {
+      if (!alreadyHere && filledNow >= 4) { layoutNote('A row holds at most four photos.'); endPhotoDrag(); return; }
+      takeOutOfRows(moving);
+      // takeOutOfRows may have re-packed this row; find the target again.
+      let at = block.slots.indexOf(pid);
+      if (at < 0) at = block.slots.length;
+      block.slots.splice(at + (after ? 1 : 0), 0, moving);
+      if (!state.blocks.includes(block)) state.blocks.push(block);
+    }
+    afterPhotoLanded(block);
+    endPhotoDrag();
+    renderBlocks(); renderTray(); touch();
+  });
+}
+
+/* Dropping a photo onto a row or text block (not onto a photo) makes a new
+   single-photo row above or below it. */
+function dropPhotoAsNewRow(index, after) {
+  const moving = dragPid;
+  takeOutOfRows(moving);
+  const row = { type: 'row', slots: [moving] };
+  const at = Math.min(index + (after ? 1 : 0), state.blocks.length);
+  state.blocks.splice(at, 0, row);
+  afterPhotoLanded(row);
+  endPhotoDrag();
+  renderBlocks(); renderTray(); touch();
+}
+
 function clearDragMarks() {
   document.querySelectorAll('.block, .omini').forEach((b) =>
-    b.classList.remove('dragging', 'over-top', 'over-bottom'));
+    b.classList.remove('dragging', 'over-top', 'over-bottom', 'photo-drop'));
+  document.querySelectorAll('.slot').forEach((sl) =>
+    sl.classList.remove('drop-left', 'drop-right', 'drop-fill'));
+  const blocks = $('blocks'); if (blocks) blocks.classList.remove('photo-drop-end');
 }
 
 /* Used by both the full blocks and the little outline, so a block can be picked
@@ -1207,6 +1408,7 @@ function clearDragMarks() {
 function wireDrag(el, index) {
   el.draggable = true;
   el.addEventListener('dragstart', (e) => {
+    if (dragPid) return;               // a photo inside this block is what's moving
     dragFrom = index;
     el.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
@@ -1217,20 +1419,22 @@ function wireDrag(el, index) {
     clearDragMarks();
   });
   el.addEventListener('dragover', (e) => {
-    if (dragFrom === null) return;
+    if (dragFrom === null && !dragPid) return;
     e.preventDefault();
     const r = el.getBoundingClientRect();
     const after = (e.clientY - r.top) > r.height / 2;
+    el.classList.toggle('photo-drop', !!dragPid);
     el.classList.toggle('over-bottom', after);
     el.classList.toggle('over-top', !after);
   });
-  el.addEventListener('dragleave', () => el.classList.remove('over-top', 'over-bottom'));
+  el.addEventListener('dragleave', () => el.classList.remove('over-top', 'over-bottom', 'photo-drop'));
   el.addEventListener('drop', (e) => {
     e.preventDefault();
-    el.classList.remove('over-top', 'over-bottom');
-    if (dragFrom === null) return;
+    el.classList.remove('over-top', 'over-bottom', 'photo-drop');
     const r = el.getBoundingClientRect();
     const after = (e.clientY - r.top) > r.height / 2;
+    if (dragPid) { dropPhotoAsNewRow(index, after); return; }
+    if (dragFrom === null) return;
     moveBlock(dragFrom, index + (after ? 1 : 0));
     dragFrom = null;
   });
@@ -1519,6 +1723,9 @@ function magicLayout() {
     else if (next && next.slots.filter(Boolean).length < 3) { next.slots.unshift(slots[0]); rows.splice(i, 1); }
   }
   state.blocks.push({ type: 'row', slots: [opener] });
+  // The photo that opens the post is the natural featured image — unless the
+  // writer has starred one on purpose.
+  if (!state.featuredChosen) state.featuredPid = opener;
   rows.forEach((r) => state.blocks.push(r));
   if (closer) state.blocks.push({ type: 'row', slots: [closer] });
   renderBlocks(); renderTray(); touch();
@@ -2158,43 +2365,89 @@ function renderWhen() {
   }
   const btn = $('publishBtn');
   btn.textContent = mode === 'future' ? 'Schedule this post'
-    : mode === 'past' ? 'Publish with that date' : 'Publish to christianunified.org';
+    : mode === 'past' ? 'Publish with that date' : 'Check & publish';
 }
 
 /* ---------------------------------------------------------------- publish */
-async function publish() {
+/* One checklist instead of a chain of pop-ups: the things that MUST be right
+   block the button; the nice-to-haves each get a one-click fix. */
+function checklistRows() {
+  const f = progressFacts();
+  const mode = state.when || 'now';
+  const now = siteNow();
+  const rows = [];
+  rows.push({ must: true, ok: f.title, label: 'A title', fix: 'Add one', go: () => $('fTitle').focus() });
+  rows.push({ must: true, ok: f.placed > 0, label: f.placed ? `${f.placed} photo${f.placed === 1 ? '' : 's'} in the post` : 'Photos in the post',
+    fix: 'Lay them out', go: () => $('stepLayout').scrollIntoView({ behavior: 'smooth' }) });
+  if (f.lonely) rows.push({ must: true, ok: false, label: `${f.lonely} vertical photo${f.lonely === 1 ? '' : 's'} standing alone`,
+    fix: 'Pair them up', act: () => { fixLoneVerticals(); } });
+  if (mode !== 'now') {
+    const bad = !state.whenAt || (mode === 'future' && state.whenAt <= now) || (mode === 'past' && state.whenAt > now);
+    rows.push({ must: true, ok: !bad, label: mode === 'future' ? 'A valid time to go live' : 'A valid past date',
+      fix: 'Fix the date', go: () => $('fWhen').focus() });
+  }
+  rows.push({ must: false, ok: f.unused === 0, label: f.unused ? `${f.unused} photo${f.unused === 1 ? '' : 's'} left out of the post` : 'Every photo is in the post',
+    fix: 'Add them at the end', act: () => {
+      const used = usedPids();
+      const free = sortByTaken(state.photoOrder.filter((p) => !used.has(p)));
+      chunkRows(free).forEach((r) => state.blocks.push({ type: 'row', slots: r }));
+      fixLoneVerticals(); renderBlocks(); renderTray(); touch();
+    } });
+  rows.push({ must: false, ok: f.words > 0, label: f.words ? `${f.words} paragraph${f.words === 1 ? '' : 's'} of words` : 'No words in the post',
+    fix: 'Paste the write-up', go: () => $('pasteWordsBtn').click() });
+  rows.push({ must: false, ok: f.noAlt === 0, label: f.noAlt ? `${f.noAlt} photo${f.noAlt === 1 ? '' : 's'} without alt text (Google reads it)` : 'Alt text on every photo',
+    fix: '✨ Write them now', act: async () => { await writeAllAlts(true); } });
+  rows.push({ must: false, ok: f.meta, label: f.meta ? 'Meta description' : 'No meta description (what Google shows)',
+    fix: 'Write it', go: () => $('fMetaDesc').focus() });
+  rows.push({ must: false, ok: f.cats > 0, label: f.cats ? `${f.cats} categor${f.cats === 1 ? 'y' : 'ies'}` : 'No category chosen',
+    fix: 'Choose', go: () => $('catChips').scrollIntoView({ behavior: 'smooth', block: 'center' }) });
+  return rows;
+}
+
+function renderChecklist() {
+  const rows = checklistRows();
+  const box = $('checkList');
+  box.innerHTML = '';
+  rows.forEach((r) => {
+    const d = document.createElement('div');
+    d.className = 'check ' + (r.ok ? 'ok' : (r.must ? 'must' : 'warn'));
+    d.innerHTML = `<span class="mark">${r.ok ? '✓' : (r.must ? '!' : '○')}</span>
+      <span class="lbl">${esc(r.label)}${!r.ok && !r.must ? ' <em>optional</em>' : ''}</span>`;
+    if (!r.ok) {
+      const b = document.createElement('button');
+      b.className = 'btn small';
+      b.textContent = r.fix;
+      b.onclick = async () => {
+        if (r.act) { b.disabled = true; b.textContent = 'Working…'; await r.act(); renderChecklist(); }
+        else { $('publishCheck').classList.add('hidden'); r.go(); }
+      };
+      d.appendChild(b);
+    }
+    box.appendChild(d);
+  });
+  const blocked = rows.some((r) => r.must && !r.ok);
+  const warns = rows.filter((r) => !r.must && !r.ok).length;
+  const go = $('checkGo');
+  go.disabled = blocked;
+  const mode = state.when || 'now';
+  go.textContent = mode === 'future' ? 'Schedule it' : mode === 'past' ? 'Publish with that date' : 'Publish it now';
+  $('checkSummary').textContent = blocked
+    ? 'Fix the items marked ! first.'
+    : warns ? `Everything required is done. ${warns} optional thing${warns === 1 ? '' : 's'} could still be better.`
+    : 'Everything looks good.';
+}
+
+function publish() {
+  renderChecklist();
+  $('publishCheck').classList.remove('hidden');
+}
+
+async function doPublish() {
+  $('publishCheck').classList.add('hidden');
   const used = usedPids();
   const pids = state.photoOrder.filter((p) => used.has(p));
-  if (!state.title.trim()) { alert('Give the post a title first (step 1).'); return; }
-  if (!pids.length) { alert('The post has no photos yet — drop some into rows in step 3.'); return; }
   const mode = state.when || 'now';
-  if (mode !== 'now') {
-    if (!state.whenAt) { alert('Pick the date and time first.'); return; }
-    const now = siteNow();
-    if (mode === 'future' && state.whenAt <= now) {
-      alert('That time has already passed. Pick a later date and time, or choose "Publish right now".');
-      return;
-    }
-    if (mode === 'past' && state.whenAt > now) {
-      alert('That date is in the future. Use "Schedule for later" instead.');
-      return;
-    }
-  }
-  let missingAlt = pids.filter((p) => !state.photos[p].alt.trim());
-  if (missingAlt.length) {
-    const writeNow = confirm(
-      `${missingAlt.length} photo(s) have no alt text — Google reads that text, so it's worth having.\n\n` +
-      `OK  = write them all with AI now (about ${Math.ceil(missingAlt.length / 8) * 10} seconds), then publish\n` +
-      `Cancel = go back to the post`);
-    if (!writeNow) return;
-    $('publishBtn').disabled = true;
-    await writeAllAlts(true);
-    $('publishBtn').disabled = false;
-    missingAlt = pids.filter((p) => !state.photos[p].alt.trim());
-    if (missingAlt.length &&
-        !confirm(`${missingAlt.length} photo(s) still have no alt text. Publish anyway?`)) return;
-  }
-
+  if (!pids.length || !state.title.trim()) return;
   const btn = $('publishBtn');
   btn.disabled = true;
   $('pubProgress').classList.remove('hidden');
@@ -2307,7 +2560,7 @@ function loadState(s) {
   localStorage.setItem('cuBlogLastDraft', s.id);
   renderCats(); renderTray(); renderBlocks(); renderChosenLinks();
   renderInlineChosen(); renderInlineSuggestions([]); renderKeywordEditor(); renderSeoCheck();
-  renderWhen(); renderOutline();
+  renderWhen(); renderOutline(); resetUndo(); renderProgress();
 }
 
 function exportDesign() {
@@ -2382,6 +2635,37 @@ async function init() {
   $('pasteWordsBtn').onclick = () => { $('wordsInput').value = ''; $('wordsModal').classList.remove('hidden'); $('wordsInput').focus(); };
   $('wordsGoBtn').onclick = () => { addWords($('wordsInput').value); $('wordsModal').classList.add('hidden'); };
   $('magicLayoutBtn').onclick = magicLayout;
+  $('undoBtn').onclick = undoLayout;
+  document.addEventListener('keydown', (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || (e.key || '').toLowerCase() !== 'z') return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (document.querySelector('.overlay:not(.hidden)')) return;
+    e.preventDefault();
+    undoLayout();
+  });
+  // Dropping a photo below the last block (or into an empty layout) appends a row.
+  const blocksBox = $('blocks');
+  blocksBox.addEventListener('dragover', (e) => {
+    if (!dragPid) return;
+    if (e.target.closest('.block')) { blocksBox.classList.remove('photo-drop-end'); return; }
+    e.preventDefault();
+    blocksBox.classList.add('photo-drop-end');
+  });
+  blocksBox.addEventListener('dragleave', () => blocksBox.classList.remove('photo-drop-end'));
+  blocksBox.addEventListener('drop', (e) => {
+    if (!dragPid || e.target.closest('.block')) return;
+    e.preventDefault();
+    dropPhotoAsNewRow(state.blocks.length, false);
+  });
+  document.querySelectorAll('#progress .pstep').forEach((st) => {
+    st.onclick = () => { const t = $(st.dataset.step); if (t) t.scrollIntoView({ behavior: 'smooth' }); };
+  });
+  if (localStorage.getItem('cuHowtoSeen')) $('howto').classList.add('hidden');
+  $('howtoClose').onclick = () => { $('howto').classList.add('hidden'); localStorage.setItem('cuHowtoSeen', '1'); };
+  $('checkGo').onclick = doPublish;
+  $('checkClose').onclick = () => $('publishCheck').classList.add('hidden');
+  $('publishCheck').onclick = (e) => { if (e.target === $('publishCheck')) $('publishCheck').classList.add('hidden'); };
 
   $('aiBtn').onclick = aiSuggest;
 
@@ -2432,7 +2716,7 @@ async function init() {
   $('pmCaption').oninput = (e) => { if (modalPid) { state.photos[modalPid].caption = e.target.value; touch(); } };
   $('pmAlt').oninput = (e) => { if (modalPid) { state.photos[modalPid].alt = e.target.value; touch(); renderSeoCheck(); } };
   $('pmFilename').oninput = (e) => { if (modalPid) { state.photos[modalPid].filename = slugify(e.target.value); touch(); } };
-  $('pmFeatureBtn').onclick = () => { state.featuredPid = modalPid; renderTray(); touch(); };
+  $('pmFeatureBtn').onclick = () => { state.featuredPid = modalPid; state.featuredChosen = true; renderTray(); touch(); };
   $('selRowBtn').onclick = () => commitSel('row');
   $('selEachBtn').onclick = () => commitSel('each');
   $('selCancelBtn').onclick = clearSel;

@@ -322,3 +322,58 @@ h3.sub { margin: 26px 0 4px; font-size: 1.15rem; }
 .linkitem .hidelink { color: #b9c4d0; font-size: .85rem; opacity: 0; transition: opacity .12s; }
 .linkitem:hover .hidelink { opacity: 1; }
 .linkitem .hidelink:hover { color: #c0392b; }
+
+/* ---- Progress strip: where you are, what's still missing ---- */
+.progress { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 0 0 18px; }
+.pstep { background: var(--white); border: 1px solid #ccd6e2; border-radius: 10px; padding: 8px 10px;
+  cursor: pointer; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: center; min-width: 0; }
+.pstep:hover { background: var(--light); }
+.pstep .pnum { grid-row: span 2; width: 24px; height: 24px; border-radius: 50%; display: inline-flex;
+  align-items: center; justify-content: center; font-size: .8rem; font-weight: 600; background: var(--sky); color: var(--navy); }
+.pstep .pname { font-weight: 600; font-size: .9rem; color: var(--navy); }
+.pstep .pnote { font-size: .72rem; color: var(--gray); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pstep.done .pnum { background: var(--navy); color: #fff; font-size: 0; }
+.pstep.done .pnum::before { content: '✓'; font-size: .8rem; }
+.pstep.warn .pnum { background: #f6d9a8; }
+.pstep.warn .pnote { color: #b4703a; }
+.pstep.todo .pnote { color: var(--blue); }
+@media (max-width: 760px) { .progress { grid-template-columns: repeat(3, 1fr); } }
+
+/* ---- First-run guide ---- */
+.howto { position: relative; background: var(--light); border: 1px solid #ccd6e2; border-radius: 12px;
+  padding: 14px 40px 12px 18px; margin-bottom: 20px; font-size: .92rem; }
+.howto ol { margin: 6px 0 0; padding-left: 20px; }
+.howto li { margin: 3px 0; }
+.howto-x { position: absolute; top: 8px; right: 10px; border: none; background: none;
+  cursor: pointer; color: var(--gray); font-size: 1rem; }
+
+/* ---- Empty layout: tell people what to do ---- */
+.empty-layout { text-align: center; padding: 34px 20px; border: 2px dashed #c5d0dc; border-radius: 12px; }
+.empty-layout p { margin: 0 0 12px; }
+.empty-layout .btn { margin-bottom: 10px; }
+
+/* ---- Dragging photos ---- */
+.tray .thumb { cursor: grab; }
+.tray .thumb:active { cursor: grabbing; }
+.photo-row .slot { cursor: grab; }
+body.dragging-photo .photo-row .slot:not(.dragging) { outline: 1px dashed #c5d0dc; outline-offset: -1px; }
+.photo-row .slot.drop-left { box-shadow: inset 4px 0 0 var(--blue); }
+.photo-row .slot.drop-right { box-shadow: inset -4px 0 0 var(--blue); }
+.photo-row .slot.drop-fill { background: var(--sky); outline: 2px solid var(--blue); outline-offset: -2px; }
+.block.photo-drop.over-top { box-shadow: 0 -4px 0 var(--blue); }
+.block.photo-drop.over-bottom { box-shadow: 0 4px 0 var(--blue); }
+.blocks.photo-drop-end { box-shadow: 0 4px 0 var(--blue); }
+body.dragging-photo .slot-hover { display: none !important; }
+
+/* ---- Publish checklist ---- */
+.checklist { margin: 12px 0 4px; }
+.check { display: flex; align-items: center; gap: 12px; padding: 9px 6px; border-bottom: 1px solid var(--sky); }
+.check .mark { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center;
+  justify-content: center; font-size: .85rem; flex: none; }
+.check.ok .mark { background: #e3efe6; color: #2f7a4a; }
+.check.warn .mark { background: #fbeedb; color: #b4703a; }
+.check.must .mark { background: #fbe1e1; color: #b03a3a; font-weight: 700; }
+.check .lbl { flex: 1; }
+.check .lbl em { color: var(--gray); font-size: .8rem; font-style: normal; margin-left: 6px; }
+.check.ok .lbl { color: var(--gray); }
+.btn.small { padding: 5px 12px; font-size: .82rem; }
