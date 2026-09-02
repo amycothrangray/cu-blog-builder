@@ -2,7 +2,7 @@
 /**
  * Plugin Name: CU Blog Bridge
  * Description: Lets the Christian Unified Blog Builder upload photos and publish posts without WordPress application passwords, which Wordfence disables on this site. Adds two REST routes under cu-blog/v1, guarded by a shared secret this plugin generates for you. See Settings → CU Blog Bridge for the secret to paste into the app's backend.
- * Version: 1.1
+ * Version: 1.2
  * Author: Christian Unified Schools of San Diego
  */
 
@@ -182,7 +182,20 @@ function cu_blog_bridge_publish(WP_REST_Request $req) {
         $post['post_category'] = array_values(array_filter(array_map('intval', $p['categories'])));
     }
 
-    $id = wp_insert_post($post, true);
+    /* Publishing the same draft twice used to make two posts, so fixing a typo
+       meant either editing in wp-admin or trashing the first one. The app now
+       remembers the post it made and sends its id back; when that post still
+       exists, this becomes an update in place. The date is left alone on an
+       update unless the app explicitly sent one. */
+    $postId   = (int) ($p['postId'] ?? 0);
+    $existing = $postId ? get_post($postId) : null;
+    $updating = $existing && $existing->post_type === 'post' && $existing->post_status !== 'trash';
+    if ($updating) {
+        $post['ID'] = $postId;
+        $id = wp_update_post($post, true);
+    } else {
+        $id = wp_insert_post($post, true);
+    }
     if (is_wp_error($id)) return $id;
 
     $featured = (int) ($p['featuredMediaId'] ?? 0);
@@ -197,6 +210,7 @@ function cu_blog_bridge_publish(WP_REST_Request $req) {
     return [
         'id'               => (int) $id,
         'link'             => get_permalink($id),
+        'updated'          => (bool) $updating,
         'yoastMetaApplied' => $yoast,
         'status'           => get_post_status($id),
         'date'             => get_post_field('post_date', $id),

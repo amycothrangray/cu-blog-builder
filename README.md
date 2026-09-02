@@ -198,6 +198,10 @@ Same drill as the other apps: edit locally, bump `?v=N` on the css/js links in
 - Photos are resized to 1800px long edge, JPEG q0.82, in the browser before upload.
 - Publishing is resumable: if it fails mid-way, press Publish again and photos
   already uploaded are skipped.
+- **Publishing a second time updates the post, not duplicates it.** Once a draft
+  has made a post, the button reads **Update the live post** and replaces that
+  post in place — same address, old version gone. *New post* starts fresh.
+  Needs bridge plugin 1.2 or later on the site.
 - The backend endpoints require the `X-CU-Key` header; without `CU_BLOG_APP_KEY`
   set they return 503. (DigitalOcean's edge rewrites that 503 into its own
   branded error page reporting 504 — that is what "not configured yet" looks
