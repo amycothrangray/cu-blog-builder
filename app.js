@@ -89,7 +89,7 @@ function freshState() {
     links: { internal: [], external: [] },
     inlineLinks: [],
     featuredPid: null,
-    publishedUrl: '',
+    publishedUrl: '', publishedId: 0,
     when: 'now', whenAt: '',
   };
 }
@@ -2157,8 +2157,12 @@ function renderWhen() {
       ? 'Goes live automatically on ' : 'Will appear on the blog dated ') + prettyWhen(state.whenAt) + warn;
   }
   const btn = $('publishBtn');
-  btn.textContent = mode === 'future' ? 'Schedule this post'
-    : mode === 'past' ? 'Publish with that date' : 'Publish to christianunified.org';
+  const again = !!state.publishedId;
+  btn.textContent = mode === 'future' ? (again ? 'Update and schedule' : 'Schedule this post')
+    : mode === 'past' ? (again ? 'Update with that date' : 'Publish with that date')
+    : (again ? 'Update the live post' : 'Publish to christianunified.org');
+  btn.title = again
+    ? 'This draft already made a post on the site — publishing again updates that post in place.' : '';
 }
 
 /* ---------------------------------------------------------------- publish */
@@ -2237,20 +2241,26 @@ async function publish() {
         featuredMediaId: state.photos[state.featuredPid]?.mediaId || state.photos[pids[0]].mediaId,
         status: mode === 'future' ? 'future' : 'publish',
         ...(mode === 'now' ? {} : { date: state.whenAt + ':00' }),
+        // Re-publishing a post this draft already made updates it in place
+        // instead of creating a second one.
+        postId: state.publishedId || 0,
       }),
     });
     state.publishedUrl = r.link;
+    state.publishedId = r.id || 0;
     const scheduled = r.status === 'future';
     setBar(1, scheduled ? 'Scheduled!' : 'Done!');
     $('pubDoneTitle').textContent = scheduled
       ? `Scheduled for ${prettyWhen(state.whenAt)} 🗓`
-      : "It's live! 🎉";
+      : r.updated ? 'Updated the live post ✅' : "It's live! 🎉";
     $('pubDoneNote').textContent = scheduled
       ? 'WordPress will put it on the blog automatically at that time — nothing else to do.'
+      : r.updated ? 'Same post, same address — the old version is gone. Browsers and the site cache can hold on to the previous one for a few minutes.'
       : (mode === 'past' ? `Published and dated ${prettyWhen(state.whenAt)}.` : '');
     $('pubLink').textContent = r.link;
     $('pubLink').href = r.link;
     $('pubDone').classList.remove('hidden');
+    renderWhen();
     touch();
   } catch (e) {
     setBar(0, '');
@@ -2286,6 +2296,28 @@ async function renderDrafts() {
   });
 }
 
+/* Drafts published before the app remembered post ids carry the post's URL but
+   no id, so re-publishing one would make a second post instead of updating the
+   first. Ask WordPress which post owns that address — the public REST API, no
+   login needed for a live post. Best effort: if it can't be resolved the button
+   simply keeps saying "Publish", which is what it said before. */
+async function backfillPublishedId() {
+  if (!state.publishedUrl || state.publishedId) return;
+  const slug = state.publishedUrl.replace(/\/+$/, '').split('/').pop();
+  if (!slug) return;
+  const draft = state;   // guard: the person may open another draft meanwhile
+  try {
+    const r = await fetch(`${SITE}/wp-json/wp/v2/posts?slug=${encodeURIComponent(slug)}&_fields=id,link`);
+    const list = await r.json();
+    if (!Array.isArray(list) || !list.length) return;
+    const hit = list.find((p) => p.link === draft.publishedUrl) || list[0];
+    if (hit && hit.id && state === draft) {
+      state.publishedId = hit.id;
+      renderWhen(); touch();
+    }
+  } catch { /* offline, or the site's REST API is closed to the browser: leave it */ }
+}
+
 function loadState(s) {
   // Older saved drafts predate these fields.
   s.inlineLinks = s.inlineLinks || [];
@@ -2294,6 +2326,7 @@ function loadState(s) {
   s.when = s.when || 'now';
   s.whenAt = s.whenAt || '';
   s.secondaryKeywords = s.secondaryKeywords || [];
+  s.publishedId = s.publishedId || 0;
   state = s;
   slugTouched = !!s.slug && s.slug !== slugify((s.title || '').replace(/\|/g, ' '));
   $('fTitle').value = s.title; $('fLocation').value = s.location;
@@ -2308,6 +2341,7 @@ function loadState(s) {
   renderCats(); renderTray(); renderBlocks(); renderChosenLinks();
   renderInlineChosen(); renderInlineSuggestions([]); renderKeywordEditor(); renderSeoCheck();
   renderWhen(); renderOutline();
+  backfillPublishedId();
 }
 
 function exportDesign() {
