@@ -26,7 +26,7 @@ images, alt text, links and JSON-LD schema **into the WordPress post itself**.
 ## What's the same as the AGP builder
 
 Everything: drafts auto-save in the browser, swapping a photo is one click,
-publishing is resumable, photos are resized to 1800px in the browser, credit and
+publishing is resumable, photos are resized to 2560px in the browser, credit and
 copyright are stamped into each JPEG's XMP, and there's a live 8-point SEO
 scorecard against the focus keyword.
 
@@ -195,7 +195,15 @@ Same drill as the other apps: edit locally, bump `?v=N` on the css/js links in
   in wp-admin for someone to approve.
 - The site's categories (Blog, Chapel, Arts, Athletics, Teacher Bios) load
   automatically — nothing to configure.
-- Photos are resized to 1800px long edge, JPEG q0.82, in the browser before upload.
+- **Photo quality.** Photos are prepared in the browser at **2560 px long edge,
+  JPEG q0.92**, using the same recipe as Amy's wall-art print script: resample in
+  halving steps, then a light unsharp mask (radius ~1.0, 70%, threshold 3), then a
+  high-quality JPEG. A single `drawImage` from a 6000 px file straight down to the
+  published size — which is what this used to do — only reads a 2x2 patch per output
+  pixel and throws the rest of the frame away, which is why photos looked soft when
+  you zoomed in. Crops are cut from the original file rather than from a copy we
+  already compressed. That work costs roughly half a second per photo, so imports go
+  one at a time and the tray fills in as they land.
 - Publishing is resumable: if it fails mid-way, press Publish again and photos
   already uploaded are skipped.
 - **Publishing a second time updates the post, not duplicates it.** Once a draft

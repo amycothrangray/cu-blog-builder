@@ -9,9 +9,11 @@ const API = '/api/cu/blog';   // the school's routes on the shared backend
 const SITE = 'https://christianunified.org';
 const SITE_HOST = 'christianunified.org';
 const ORG = 'Christian Unified Schools of San Diego';
-const MAX_EDGE = 1800;      // long edge of published photos
+const MAX_EDGE = 2560;      // long edge of published photos
 const THUMB_EDGE = 420;     // tray thumbnails (also sent to the AI)
-const JPEG_Q = 0.82;
+const JPEG_Q = 0.92;
+const THUMB_Q = 0.8;
+const MAX_UPLOAD_BYTES = 11_500_000;   // the backend refuses anything over 12 MB
 /* Credit + copyright stamped inside every published photo. Defaults to the
    school; a post shot by an outside photographer overrides it in step 1. */
 const DEFAULT_CREDIT = ORG;
@@ -341,6 +343,164 @@ function embedXmp(dataUrl, fields) {
 }
 
 
+/* ----------------------------------------------------------------- imaging
+   Photos have to hold up when someone zooms in, so they go through the same
+   recipe as Amy's wall-art print script: resample properly, sharpen, then save
+   at a high JPEG quality.
+
+   What used to make them soft was one `drawImage` straight from a ~6000 px file
+   down to the published size. Bilinear filtering only reads a 2x2 patch per
+   output pixel, so at a 3x reduction most of the frame is simply thrown away —
+   the result is mush, and nothing sharpened it afterwards. Halving repeatedly
+   averages every source pixel in, which is what LANCZOS buys you in the print
+   script, and the unsharp mask puts back the bite that any resample costs. */
+
+const CAN_BLUR = (() => {
+  try {
+    const c = document.createElement('canvas').getContext('2d');
+    c.filter = 'blur(1px)';
+    return c.filter === 'blur(1px)';
+  } catch { return false; }
+})();
+
+function smoothCtx(canvas) {
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  return ctx;
+}
+
+/* Downsize `img` (optionally a source rect) into a canvas of exactly dw x dh,
+   never shrinking by more than half in one step. The first step draws straight
+   from the source, so we never hold a canvas the size of the original. */
+function stepDown(img, sx, sy, sw, sh, dw, dh) {
+  const sizes = [];
+  let cw = Math.max(1, Math.round(sw)), ch = Math.max(1, Math.round(sh));
+  while (cw > dw * 2 && ch > dh * 2) {
+    cw = Math.max(dw, Math.round(cw / 2));
+    ch = Math.max(dh, Math.round(ch / 2));
+    sizes.push([cw, ch]);
+  }
+  const last = sizes[sizes.length - 1];
+  if (!last || last[0] !== dw || last[1] !== dh) sizes.push([dw, dh]);
+
+  let cur = null, pw = 0, ph = 0;
+  for (const [w, h] of sizes) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = smoothCtx(c);
+    if (cur) ctx.drawImage(cur, 0, 0, pw, ph, 0, 0, w, h);
+    else ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+    cur = c; pw = w; ph = h;
+  }
+  return cur;
+}
+
+/* PIL's UnsharpMask, done with the canvas's own (native, fast) blur: add back
+   `percent` of the difference between the photo and a blurred copy, but only
+   where that difference is real detail rather than sensor noise. */
+function unsharp(canvas, radius, percent, threshold) {
+  if (!CAN_BLUR) return;          // very old browser: leave the photo as it is
+  const w = canvas.width, h = canvas.height;
+  const pad = Math.max(2, Math.ceil(radius * 3));
+
+  // Blurring samples transparent pixels past the canvas edge, which would leave
+  // a bright rim all the way round. Pad with the edge pixels stretched outwards,
+  // blur that, and read back only the middle.
+  const pc = document.createElement('canvas');
+  pc.width = w + pad * 2; pc.height = h + pad * 2;
+  const px = pc.getContext('2d');
+  px.drawImage(canvas, 0, 0, 1, h, 0, pad, pad, h);
+  px.drawImage(canvas, w - 1, 0, 1, h, w + pad, pad, pad, h);
+  px.drawImage(canvas, 0, 0, w, 1, pad, 0, w, pad);
+  px.drawImage(canvas, 0, h - 1, w, 1, pad, h + pad, w, pad);
+  px.drawImage(canvas, 0, 0, 1, 1, 0, 0, pad, pad);
+  px.drawImage(canvas, w - 1, 0, 1, 1, w + pad, 0, pad, pad);
+  px.drawImage(canvas, 0, h - 1, 1, 1, 0, h + pad, pad, pad);
+  px.drawImage(canvas, w - 1, h - 1, 1, 1, w + pad, h + pad, pad, pad);
+  px.drawImage(canvas, pad, pad);
+
+  const bc = document.createElement('canvas');
+  bc.width = pc.width; bc.height = pc.height;
+  const bx = bc.getContext('2d');
+  bx.filter = `blur(${radius}px)`;
+  bx.drawImage(pc, 0, 0);
+
+  const ctx = canvas.getContext('2d');
+  const shot = ctx.getImageData(0, 0, w, h);
+  const soft = bx.getImageData(pad, pad, w, h).data;
+  // Channels are unrolled and the alpha byte skipped — this runs over several
+  // million pixels per photo. Writing into a Uint8ClampedArray clamps for us.
+  const a = shot.data, amt = percent / 100, t = threshold, len = a.length;
+  for (let i = 0; i < len; i += 4) {
+    let d = a[i] - soft[i];
+    if (d >= t || d <= -t) a[i] += amt * d;
+    d = a[i + 1] - soft[i + 1];
+    if (d >= t || d <= -t) a[i + 1] += amt * d;
+    d = a[i + 2] - soft[i + 2];
+    if (d >= t || d <= -t) a[i + 2] += amt * d;
+  }
+  ctx.putImageData(shot, 0, 0);
+}
+
+/* The print script uses UnsharpMask(radius 1.0-1.4, 70%, threshold 3) at 300
+   dpi. Screen pixels are bigger than print dots, so the radius comes down a
+   touch; the amount and threshold are Amy's. */
+function sharpenFor(longEdge) {
+  if (longEdge >= 2000) return { radius: 1.0, percent: 70, threshold: 3 };
+  if (longEdge >= 900) return { radius: 0.8, percent: 70, threshold: 3 };
+  return { radius: 0.6, percent: 60, threshold: 3 };
+}
+
+const jpegBytes = (dataUrl) =>
+  Math.floor((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+
+/* One published-quality JPEG from `img`, optionally cropped to a source rect. */
+function renderJpeg(img, edge, q, rect) {
+  const sx = rect ? rect.sx : 0;
+  const sy = rect ? rect.sy : 0;
+  const sw = rect ? rect.sw : (img.naturalWidth || img.width);
+  const sh = rect ? rect.sh : (img.naturalHeight || img.height);
+  const sc = Math.min(1, edge / Math.max(sw, sh));      // never blow a photo up
+  const dw = Math.max(1, Math.round(sw * sc));
+  const dh = Math.max(1, Math.round(sh * sc));
+  const c = stepDown(img, sx, sy, sw, sh, dw, dh);
+  const s = sharpenFor(Math.max(dw, dh));
+  unsharp(c, s.radius, s.percent, s.threshold);
+  let url = c.toDataURL('image/jpeg', q);
+  // A very busy frame at this quality can approach the backend's 12 MB ceiling;
+  // ease the quality back rather than fail halfway through publishing.
+  for (let qq = q - 0.05; jpegBytes(url) > MAX_UPLOAD_BYTES && qq >= 0.72; qq -= 0.05) {
+    url = c.toDataURL('image/jpeg', qq);
+  }
+  return { url, w: dw, h: dh };
+}
+
+/* Resampling and sharpening cost real work, so imports go through one at a time
+   with a breath in between — the tray still fills in as photos land. */
+let importQueue = Promise.resolve();
+function queueImport(job) {
+  importQueue = importQueue
+    .then(job)
+    .catch(() => {})
+    .then(() => new Promise((r) => setTimeout(r, 0)));
+  return importQueue;
+}
+
+/* A crop should be cut from the original file, not from a JPEG we already made
+   — re-encoding a re-encode is where sharpness quietly goes. Originals are only
+   kept for the session that imported them; a draft reopened later falls back to
+   the published copy, which is now full size and high quality anyway. */
+const origFiles = new Map();   // pid -> the untouched File
+const origUrls = new Map();    // pid -> an object URL for it
+
+function forgetOriginal(pid) {
+  const u = origUrls.get(pid);
+  if (u) URL.revokeObjectURL(u);
+  origUrls.delete(pid); origFiles.delete(pid);
+}
+
+
 /* ---------------------------------------------------------------- cropping
    Crops are non-destructive: the untouched resized file is kept as `origFull`
    the first time a crop is applied, and every later crop is recomputed from it,
@@ -359,6 +519,11 @@ let cropRatio = null;    // null = free
 let cropImg = null;      // the source Image element
 
 function sourceOf(pid) {
+  const f = origFiles.get(pid);
+  if (f) {
+    if (!origUrls.has(pid)) origUrls.set(pid, URL.createObjectURL(f));
+    return origUrls.get(pid);
+  }
   const p = state.photos[pid];
   return p.origFull || p.full;
 }
@@ -497,18 +662,12 @@ function renderCrop(pid, box, ratioUsed) {
     img.onload = () => {
       if (!p.origFull) p.origFull = p.full;      // keep the untouched original
       const iw = img.naturalWidth, ih = img.naturalHeight;
-      const sx = Math.round(box.x * iw), sy = Math.round(box.y * ih);
-      const sw = Math.max(1, Math.round(box.w * iw)), sh = Math.max(1, Math.round(box.h * ih));
-      const make = (edge, q) => {
-        const sc = Math.min(1, edge / Math.max(sw, sh));
-        const c = document.createElement('canvas');
-        c.width = Math.max(1, Math.round(sw * sc));
-        c.height = Math.max(1, Math.round(sh * sc));
-        c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
-        return { url: c.toDataURL('image/jpeg', q), w: c.width, h: c.height };
+      const rect = {
+        sx: Math.round(box.x * iw), sy: Math.round(box.y * ih),
+        sw: Math.max(1, Math.round(box.w * iw)), sh: Math.max(1, Math.round(box.h * ih)),
       };
-      const full = make(MAX_EDGE, JPEG_Q);
-      const thumb = make(THUMB_EDGE, 0.75);
+      const full = renderJpeg(img, MAX_EDGE, JPEG_Q, rect);
+      const thumb = renderJpeg(img, THUMB_EDGE, THUMB_Q, rect);
       p.full = full.url; p.w = full.w; p.h = full.h;
       p.thumb = thumb.url;
       p.crop = { ...box };
@@ -539,11 +698,7 @@ function resetCrop() {
   const img = new Image();
   img.onload = () => {
     p.w = img.naturalWidth; p.h = img.naturalHeight;
-    const c = document.createElement('canvas');
-    const sc = Math.min(1, THUMB_EDGE / Math.max(p.w, p.h));
-    c.width = Math.round(p.w * sc); c.height = Math.round(p.h * sc);
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    p.thumb = c.toDataURL('image/jpeg', 0.75);
+    p.thumb = renderJpeg(img, THUMB_EDGE, THUMB_Q).url;
     p.mediaId = null; p.mediaUrl = null;
     $('cropModal').classList.add('hidden');
     renderTray(); renderBlocks(); touch();
@@ -572,11 +727,7 @@ async function restorePhoto(pid) {
   const img = new Image();
   await new Promise((r) => { img.onload = r; img.src = p.full; });
   p.w = img.naturalWidth; p.h = img.naturalHeight;
-  const c = document.createElement('canvas');
-  const sc = Math.min(1, THUMB_EDGE / Math.max(p.w, p.h));
-  c.width = Math.round(p.w * sc); c.height = Math.round(p.h * sc);
-  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-  p.thumb = c.toDataURL('image/jpeg', 0.75);
+  p.thumb = renderJpeg(img, THUMB_EDGE, THUMB_Q).url;
 }
 
 /* Shuffle the photos inside one row. Always lands on a different order. */
@@ -624,33 +775,32 @@ async function toggleRowSquares(block, btn) {
 function loadFiles(files) {
   [...files].forEach((f) => {
     if (!/^image\//.test(f.type)) return;
-    const img = new Image();
-    img.onload = () => {
-      const make = (edge, q) => {
-        const sc = Math.min(1, edge / Math.max(img.width, img.height));
-        const c = document.createElement('canvas');
-        c.width = Math.round(img.width * sc);
-        c.height = Math.round(img.height * sc);
-        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        return { url: c.toDataURL('image/jpeg', q), w: c.width, h: c.height };
+    queueImport(() => new Promise((done) => {
+      const img = new Image();
+      const url = URL.createObjectURL(f);
+      img.onload = () => {
+        const full = renderJpeg(img, MAX_EDGE, JPEG_Q);
+        const thumb = renderJpeg(img, THUMB_EDGE, THUMB_Q);
+        const pid = crypto.randomUUID();
+        state.photos[pid] = {
+          id: pid,
+          filename: slugify(f.name.replace(/\.[^.]+$/, '')) || 'photo',
+          alt: '', caption: '', w: full.w, h: full.h,
+          full: full.url, thumb: thumb.url,
+          mediaId: null, mediaUrl: null,
+        };
+        // Hold on to the file itself so a later crop is cut from the original.
+        origFiles.set(pid, f);
+        state.photoOrder.push(pid);
+        if (!state.featuredPid) state.featuredPid = pid;
+        URL.revokeObjectURL(url);
+        renderTray(); touch();
+        readTakenAt(f).then((ts) => { if (state.photos[pid]) { state.photos[pid].takenAt = ts; touch(); } });
+        done();
       };
-      const full = make(MAX_EDGE, JPEG_Q);
-      const thumb = make(THUMB_EDGE, 0.75);
-      const pid = crypto.randomUUID();
-      state.photos[pid] = {
-        id: pid,
-        filename: slugify(f.name.replace(/\.[^.]+$/, '')) || 'photo',
-        alt: '', caption: '', w: full.w, h: full.h,
-        full: full.url, thumb: thumb.url,
-        mediaId: null, mediaUrl: null,
-      };
-      state.photoOrder.push(pid);
-      if (!state.featuredPid) state.featuredPid = pid;
-      URL.revokeObjectURL(img.src);
-      renderTray(); touch();
-      readTakenAt(f).then((ts) => { if (state.photos[pid]) { state.photos[pid].takenAt = ts; touch(); } });
-    };
-    img.src = URL.createObjectURL(f);
+      img.onerror = () => { URL.revokeObjectURL(url); done(); };
+      img.src = url;
+    }));
   });
 }
 
@@ -1785,16 +1935,11 @@ function addSourceFiles(files) {
     // weigh 8 MB — 1600px is plenty for the model to read the text.
     const img = new Image();
     img.onload = () => {
-      const make = (edge, q) => {
-        const sc = Math.min(1, edge / Math.max(img.width, img.height));
-        const c = document.createElement('canvas');
-        c.width = Math.max(1, Math.round(img.width * sc));
-        c.height = Math.max(1, Math.round(img.height * sc));
-        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        return c.toDataURL('image/jpeg', q);
-      };
+      // Still 1600px, but resampled and sharpened the same way as post photos:
+      // small text in a phone snap survives that and turns to mush without it.
       sourceDocs.push({ id: crypto.randomUUID(), name: f.name, mediaType: 'image/jpeg',
-        dataBase64: make(1600, 0.85).split(',')[1], thumb: make(120, 0.7) });
+        dataBase64: renderJpeg(img, 1600, 0.85).url.split(',')[1],
+        thumb: renderJpeg(img, 120, 0.7).url });
       URL.revokeObjectURL(img.src);
       renderSourceDocs();
     };
@@ -2787,6 +2932,7 @@ async function init() {
     state.blocks.forEach((b) => { if (b.type === 'row') b.slots = b.slots.map((p) => (p === modalPid ? null : p)); });
     state.photoOrder = state.photoOrder.filter((p) => p !== modalPid);
     delete state.photos[modalPid];
+    forgetOriginal(modalPid);
     if (state.featuredPid === modalPid) state.featuredPid = state.photoOrder[0] || null;
     $('photoModal').classList.add('hidden');
     renderTray(); renderBlocks(); touch();
